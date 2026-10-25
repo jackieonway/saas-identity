@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="referrer" content="no-referrer">
+    <title>账号认证中心</title>
+    <link rel="stylesheet" href="/sso/assets/identity.css">
+    <script src="/sso/assets/identity.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#auth-content">跳到认证表单</a>
+    <main class="auth-shell" aria-label="账号认证中心">
+      <aside class="identity-story" aria-labelledby="story-title">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span>认证中心<span class="brand-en" lang="en">IDENTITY</span></span>
+        </div>
+        <div class="story-copy">
+          <p class="story-kicker">一个账号 · 安心连接</p>
+          <h2 id="story-title">通往您信任的<br>每一个应用。</h2>
+          <p>在这里确认您的账号，<br>查看应用申请的信息，并决定是否继续。</p>
+        </div>
+        <div class="connection-art" aria-hidden="true">
+          <span class="orbit orbit-one"></span>
+          <span class="orbit orbit-two"></span>
+          <span class="orbit orbit-three"></span>
+          <span class="orbit-point point-one"></span>
+          <span class="orbit-point point-two"></span>
+          <span class="orbit-center"></span>
+        </div>
+        <p class="story-footer"><span class="lock-mark" aria-hidden="true"></span>本次登录不会向应用提供密码</p>
+      </aside>
+
+      <section class="auth-content" id="auth-content" tabindex="-1" aria-busy="true">
+        <header class="page-heading">
+          <p class="eyebrow">账号认证</p>
+          <h1 id="page-title" tabindex="-1">正在准备安全登录</h1>
+          <p id="page-description" class="page-description">请稍候，即将为您打开认证页面。</p>
+        </header>
+
+        <section id="request-context" class="request-context" aria-label="正在连接的应用" hidden>
+          <span class="application-symbol" aria-hidden="true">↗</span>
+          <div><p class="field-caption">即将连接</p><h2 id="client-name"></h2><p id="client-purpose" class="muted" hidden></p></div>
+        </section>
+
+        <div id="notice" class="notice" hidden></div>
+        <div id="error-message" class="notice notice-error" role="alert" aria-atomic="true" tabindex="-1" hidden></div>
+        <div id="loading-state" class="loading-state" role="status"><span class="loading-dot" aria-hidden="true"></span><span>正在确认登录状态…</span></div>
+
+        <form id="login-form" class="auth-form" method="post" hidden novalidate>
+          <div class="form-field">
+            <label for="username">账号</label>
+            <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="256" required aria-describedby="username-error" placeholder="请输入账号用户名">
+            <p id="username-error" class="field-error" hidden></p>
+          </div>
+          <div class="form-field">
+            <label for="password">密码</label>
+            <div class="password-field">
+              <input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required aria-describedby="password-error" placeholder="请输入密码">
+              <button id="toggle-password" class="password-toggle" type="button" aria-controls="password" aria-label="显示密码" aria-pressed="false">显示</button>
+            </div>
+            <p id="password-error" class="field-error" hidden></p>
+          </div>
+          <button id="login-submit" class="button button-primary" type="submit"><span>登录并继续</span><span aria-hidden="true">→</span></button>
+          <p id="login-help" class="form-help">登录后，您可以查看并确认应用申请的访问权限。</p>
+        </form>
+
+        <section id="consent-panel" class="consent-panel" aria-label="确认应用访问" hidden>
+          <div class="account-card">
+            <span class="account-avatar" aria-hidden="true">账</span>
+            <div class="account-details"><p class="field-caption">使用当前账号</p><p id="account-name" class="account-name"></p><p id="account-identifier" class="muted" hidden></p></div>
+            <button id="change-account" class="text-button" type="button" hidden>切换账号</button>
+          </div>
+          <div class="permissions">
+            <h2>此应用希望获取</h2>
+            <ul id="scope-list" class="scope-list"></ul>
+            <p class="permission-note">仅分享您在此确认的账号信息。应用内可用的功能仍以您的实际访问权限为准。</p>
+          </div>
+          <form id="consent-form" method="post">
+            <button id="consent-allow" class="button button-primary" type="submit" name="decision" value="allow"><span>同意并继续</span><span aria-hidden="true">→</span></button>
+            <button id="consent-deny" class="button button-secondary" type="button">取消访问</button>
+          </form>
+        </section>
+
+        <section id="complete-panel" class="complete-panel" hidden>
+          <span class="complete-symbol" aria-hidden="true">✓</span>
+          <p id="complete-message"></p>
+        </section>
+
+        <section id="restart-panel" class="restart-panel" hidden>
+          <p>当前账号或登录状态已发生变化。请重新登录，再确认此应用的访问请求。</p>
+          <button id="restart-button" class="button button-primary" type="button">重新开始登录</button>
+        </section>
+
+        <div id="recovery-actions" class="recovery-actions" hidden><button id="retry-button" class="button button-secondary" type="button">重新载入</button></div>
+        <noscript><p class="notice notice-error">请在浏览器中启用 JavaScript，然后重新打开登录页面以继续。</p></noscript>
+        <footer class="auth-footer"><span class="footer-rule" aria-hidden="true"></span><p>安全认证，由您确认</p></footer>
+      </section>
+    </main>
+    <div id="screenreader-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <p class="page-footer">账号认证中心<span aria-hidden="true"> / </span><span lang="en">ACCOUNT · CONNECTION · TRUST</span></p>
+  </body>
+</html>
