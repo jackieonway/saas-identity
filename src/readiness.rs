@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
     let ready:bool=sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM public.identity_deployment_state d JOIN pg_catalog.pg_roles r ON r.rolname=current_user \
-         WHERE d.singleton AND d.schema_version=20 AND d.issuer=$1 AND d.identity_runtime=current_user \
+         WHERE d.singleton AND d.schema_version=1 AND d.issuer=$1 AND d.identity_runtime=current_user \
          AND current_user=session_user AND r.rolcanlogin \
          AND NOT r.rolsuper AND NOT r.rolcreaterole AND NOT r.rolcreatedb AND NOT r.rolreplication AND NOT r.rolbypassrls \
          AND NOT pg_catalog.pg_has_role(current_user,d.migration_owner,'MEMBER') \
