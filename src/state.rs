@@ -14,6 +14,8 @@ pub(crate) struct IdentityState {
     pub(crate) login_limits: Arc<crate::login_limits::LoginLimits>,
     introspection_attempts: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
     pub(crate) internal_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) context_platform: Arc<dyn crate::oidc::context::bridge::SelectionPort>,
+    pub(crate) context_slots: Arc<tokio::sync::Semaphore>,
 }
 
 // Local protocol modules retain a short state alias; it contains only authority
@@ -31,6 +33,10 @@ impl IdentityState {
         let (authentication, accounts) =
             crate::authentication::new(pool.clone(), passwords.clone(), config.clone());
         Self {
+            context_platform: crate::oidc::context::bridge::configured(
+                config.context_platform.clone(),
+            ),
+            context_slots: Arc::new(tokio::sync::Semaphore::new(16)),
             pool,
             authentication,
             accounts,

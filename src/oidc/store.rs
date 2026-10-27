@@ -9,6 +9,7 @@ use crate::{error::AppError, sso::AccountSessionProof};
 
 #[derive(sqlx::FromRow, Clone)]
 pub(super) struct Flow {
+    pub consented_at: Option<DateTime<Utc>>,
     pub id: Uuid,
     pub browser_hash: String,
     pub csrf_hash: String,
@@ -155,6 +156,7 @@ pub(super) async fn code(
     flow: &Flow,
     session: &AccountSessionProof,
 ) -> Result<(String, DateTime<Utc>)> {
+    let selection_expiry = super::context::selection_deadline(state, tx, flow).await?;
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
         .await
@@ -164,8 +166,11 @@ pub(super) async fn code(
     let grant_expiry = session
         .expires_at
         .min(now + chrono::Duration::seconds(state.config.oidc_refresh_ttl_seconds));
-    let code_expiry =
+    let mut code_expiry =
         grant_expiry.min(now + chrono::Duration::seconds(state.config.oidc_code_ttl_seconds));
+    if let Some(expires) = selection_expiry {
+        code_expiry = code_expiry.min(expires);
+    }
     super::deadline(tx, code_expiry).await?;
     sqlx::query("INSERT INTO oidc_grants(id,client_id,client_policy_version,session_id,user_id,account_version,scope,nonce,auth_time,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
         .bind(grant_id).bind(flow.client_id).bind(flow.client_policy_version).bind(session.id).bind(session.user_id)
@@ -173,6 +178,7 @@ pub(super) async fn code(
     sqlx::query("INSERT INTO oidc_authorization_codes(id,grant_id,token_hash,redirect_uri,code_challenge,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(crate::util::uuid7::new_uuid()).bind(grant_id).bind(super::digest(&token)).bind(&flow.redirect_uri)
         .bind(&flow.code_challenge).bind(now).bind(code_expiry).execute(&mut **tx).await?;
+    super::context::attach_grant(tx, flow, grant_id).await?;
     Ok((token, code_expiry))
 }
 

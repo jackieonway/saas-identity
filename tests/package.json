@@ -1,0 +1,7 @@
+{
+  "name": "saas-identity-browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "context-selection-ui": "node context-selection-ui.mjs" },
+  "devDependencies": { "playwright-core": "1.64.1" }
+}

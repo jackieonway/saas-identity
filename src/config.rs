@@ -33,6 +33,8 @@ pub(crate) struct Config {
     pub(crate) login_verify_budget_ms: u64,
     pub(crate) oauth_introspection_attempts_per_minute: usize,
     pub(crate) service_expected_customer_client: Option<uuid::Uuid>,
+    pub(crate) context_platform: Option<Arc<crate::oidc::context::bridge::Settings>>,
+    pub(crate) context_cipher: Option<Arc<crate::oidc::context::crypto::Keys>>,
 }
 
 impl Config {
@@ -74,7 +76,18 @@ impl Config {
             anyhow::ensure!(sso_enabled, "OIDC_REQUIRES_SSO");
             anyhow::ensure!(oidc_issuer.is_some(), "OIDC_ISSUER_REQUIRED");
         }
+        let context_platform = crate::oidc::context::bridge::Settings::load(env)?.map(Arc::new);
+        let context_cipher = optional(env, "CONTEXT_SELECTION_KEY_FILE")
+            .map(|path| crate::oidc::context::crypto::Keys::load(&path))
+            .transpose()?
+            .map(Arc::new);
+        anyhow::ensure!(
+            context_platform.is_some() == context_cipher.is_some(),
+            "CONTEXT_SELECTION_PLATFORM_AND_KEY_REQUIRED"
+        );
         Ok(Self {
+            context_platform,
+            context_cipher,
             app_env,
             database_url,
             bind_addr,

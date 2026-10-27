@@ -143,8 +143,11 @@ async fn exchange(
         grant.account_version,
     )
     .await?;
-    let (response, issued_expiry) =
+    let (mut response, issued_expiry) =
         issue(state, &mut tx, &grant, &current_client, &proof, true).await?;
+    if let Some(extension) = super::context::code_extension(state, &mut tx, &grant).await? {
+        response["context_selection"] = extension;
+    }
     sqlx::query("UPDATE oidc_authorization_codes SET consumed_at=clock_timestamp() WHERE id=$1")
         .bind(code.id)
         .execute(&mut *tx)

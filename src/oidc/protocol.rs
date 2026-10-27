@@ -1,6 +1,6 @@
 //! HTTP protocol boundaries. OAuth back-channel endpoints do not accept Cookies as authentication.
 
-use super::{account_logout, clients, interaction, invalid, keys, tokens, Result};
+use super::{account_logout, clients, context, interaction, invalid, keys, tokens, Result};
 use crate::{error::AppError, state::AppState};
 use axum::{
     extract::{RawForm, RawQuery, Request, State},
@@ -25,6 +25,11 @@ pub(crate) fn routes() -> Router<AppState> {
             get(interaction::get).post(interaction::submit),
         )
         .route("/oidc/token", post(tokens::token))
+        .route("/oidc/context-interactions", post(context::create))
+        .route(
+            "/internal/identity/context-selection/source",
+            post(context::source),
+        )
         .route(
             "/oidc/userinfo",
             get(tokens::userinfo).post(tokens::userinfo),
@@ -55,6 +60,9 @@ pub(crate) fn routes() -> Router<AppState> {
             post(keys::revoke),
         )
         .route("/sso/login", get(login_page))
+        .route("/sso/applications", get(applications_page))
+        .route("/sso/assets/applications.js", get(applications_js))
+        .route("/sso/assets/applications.css", get(applications_css))
         .route("/sso/assets/identity.css", get(identity_css))
         .route("/sso/assets/identity.js", get(identity_js))
         .route_layer(middleware::from_fn(protected_headers))
@@ -86,6 +94,34 @@ async fn identity_css(State(state): State<AppState>) -> std::result::Result<Resp
     Ok((
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
         include_str!("../../static/identity/identity.css"),
+    )
+        .into_response())
+}
+async fn applications_page(
+    State(state): State<AppState>,
+) -> std::result::Result<Response, AppError> {
+    super::enabled(&state)?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("../../static/identity/applications.html"),
+    )
+        .into_response())
+}
+async fn applications_js(State(state): State<AppState>) -> std::result::Result<Response, AppError> {
+    super::enabled(&state)?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("../../static/identity/applications.js"),
+    )
+        .into_response())
+}
+async fn applications_css(
+    State(state): State<AppState>,
+) -> std::result::Result<Response, AppError> {
+    super::enabled(&state)?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("../../static/identity/applications.css"),
     )
         .into_response())
 }

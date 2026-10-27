@@ -3,3 +3,4 @@
 *.pem
 *.key
 *private*.json
+/tests/node_modules/

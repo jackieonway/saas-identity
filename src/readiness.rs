@@ -43,6 +43,10 @@ pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
          AND NOT pg_catalog.has_table_privilege(current_user,'public.users','DELETE,TRUNCATE,TRIGGER') \
          AND pg_catalog.has_table_privilege(current_user,'public.sso_sessions','SELECT') \
          AND pg_catalog.has_table_privilege(current_user,'public.oidc_grants','SELECT') \
+         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','SELECT') \
+         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','INSERT') \
+         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','UPDATE') \
+         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','DELETE') \
          AND pg_catalog.has_table_privilege(current_user,'public.identity_service_clients','SELECT') \
          AND pg_catalog.has_table_privilege(current_user,'public.identity_audit_logs','INSERT') \
          AND NOT pg_catalog.has_any_column_privilege(current_user,'public.identity_service_clients','INSERT,UPDATE,REFERENCES') \
@@ -52,10 +56,18 @@ pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
          AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY['memberships','roles','menus','organizations','tenants','user_roles', \
            'applications','tenant_applications','organization_applications','platform_sessions','platform_session_refresh_tokens', \
            'oauth_clients','oauth_tokens','oauth_authorization_codes','oauth_authorization_requests','oauth_device_codes', \
-           'console_browsers','console_login_flows','bff_sessions','customer_portal_contexts']::text[]) AS target(name) \
+           'console_browsers','console_login_flows','bff_sessions','customer_portal_contexts', \
+           'context_selections','context_selection_services','context_selection_registrations']::text[]) AS target(name) \
            WHERE pg_catalog.has_any_column_privilege(current_user,'public.'||target.name,'SELECT,INSERT,UPDATE,REFERENCES') \
               OR pg_catalog.has_table_privilege(current_user,'public.'||target.name,'DELETE,TRUNCATE,TRIGGER,REFERENCES'))")
         .fetch_one(&state.pool).await.map_err(|_|AppError::Unavailable)?;
+    if let Some(platform) = state.config.context_platform.as_ref() {
+        let reused:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_service_clients WHERE secret_hash=$1) OR EXISTS(SELECT 1 FROM oidc_clients WHERE secret_hash=$1)")
+            .bind(platform.secret_digest()).fetch_one(&state.pool).await.map_err(|_|AppError::Unavailable)?;
+        if reused {
+            return Err(AppError::Unavailable);
+        }
+    }
     if isolated {
         Ok(())
     } else {

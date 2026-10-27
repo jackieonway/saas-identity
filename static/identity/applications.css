@@ -1,0 +1,52 @@
+.applications-page { display: block; min-height: 100svh; padding: 0; background: #f6f7f3; }
+.management-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; max-width: 1184px; margin: auto; padding: 28px 48px; border-bottom: 1px solid var(--line); }
+.management-brand { display: flex; align-items: center; gap: 13px; color: var(--ink); text-decoration: none; font-size: 18px; font-weight: 600; }
+.management-brand .brand-mark { background: #173e32; }
+.management-brand small { display: block; margin-top: 4px; color: var(--subtle); font: 9px Georgia,serif; letter-spacing: .14em; }
+.management-account { display: flex; gap: 20px; align-items: center; font-size: 13px; }
+.management-main { max-width: 1024px; min-height: calc(100svh - 200px); padding: 62px 48px 60px; margin: auto; }
+.management-heading { margin-bottom: 36px; }
+.management-heading h1 { font-family: "Songti SC","SimSun",serif; font-size: clamp(30px,4vw,44px); font-weight: 500; line-height: 1.4; letter-spacing: -.025em; }
+.management-heading .eyebrow { margin-bottom: 14px; }
+.management-intro { max-width: 580px; margin: 17px 0 0; color: var(--secondary); font-size: 14px; line-height: 1.9; }
+.mobile-break { display: none; }
+.authorization-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.authorization-tabs { display: flex; gap: 28px; }
+.authorization-tab { position: relative; padding: 16px 0; border: 0; color: var(--secondary); background: transparent; font: inherit; font-size: 14px; }
+.authorization-tab[aria-pressed=true] { color: var(--jade-dark); font-weight: 600; }
+.authorization-tab[aria-pressed=true]::after { content: ""; position: absolute; height: 2px; background: var(--jade); bottom: -1px; inset-inline: 0; }
+.authorization-tab span { display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: 20px; background: #e9eee7; font-size: 11px; font-variant-numeric: tabular-nums; }
+.application-list { display: grid; gap: 14px; }
+.application-card { display: grid; grid-template-columns: 48px minmax(0,1fr) auto; align-items: start; gap: 18px; padding: 24px; border: 1px solid #dce4dc; border-radius: 12px; background: #fff; }
+.application-initial { display: grid; place-items: center; width: 46px; height: 46px; border: 1px solid #dce7df; border-radius: 12px; background: #f1f6ef; color: var(--jade-dark); font-family: "Songti SC","SimSun",serif; font-size: 22px; }
+.application-card h2 { margin: 0 0 5px; font-size: 17px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.application-meta { margin: 0; color: var(--secondary); font-size: 12px; }
+.application-scopes { display: flex; flex-wrap: wrap; gap: 7px; margin: 17px 0 13px; padding: 0; list-style: none; }
+.application-scopes li { padding: 4px 8px; border: 1px solid #e1e8e0; border-radius: 4px; color: var(--secondary); background: #fbfcf9; font-size: 11px; }
+.application-time { margin: 0; color: var(--subtle); font-size: 11px; line-height: 1.8; }
+.application-revoke { min-height: 40px; padding: 8px 13px; border: 1px solid #dfd8d2; border-radius: 6px; background: #fff; color: #8f4939; font: inherit; font-size: 12px; }
+.application-revoke:hover { background: #fcf3ef; border-color: #cda797; }
+.revoked-label { color: var(--subtle); font-size: 12px; padding-top: 7px; }
+.application-actions { display: grid; justify-items: end; gap: 13px; }
+.authorization-note { display: flex; gap: 13px; margin-top: 30px; padding: 22px 0 0; border-top: 1px solid var(--line); }
+.note-symbol { display: grid; place-items: center; flex: 0 0 20px; height: 20px; border: 1px solid #b5c6b8; border-radius: 50%; color: var(--secondary); font: italic 13px Georgia,serif; }
+.authorization-note h2 { margin: 0 0 6px; font-size: 12px; font-weight: 600; }
+.authorization-note p { max-width: 650px; margin: 0; color: var(--secondary); font-size: 12px; line-height: 1.9; }
+.authorization-empty { padding: 48px 24px; text-align: center; border: 1px dashed #cfdace; border-radius: 12px; }
+.empty-symbol { color: #789b84; font: 38px Georgia,serif; }
+.authorization-empty h2 { font-size: 17px; font-weight: 500; }
+.authorization-empty p { color: var(--secondary); font-size: 13px; line-height: 1.8; }
+.management-login { max-width: 440px; padding: 32px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.management-login h2 { font-size: 21px; margin: 0 0 8px; }
+.management-login > p:not(.eyebrow) { color: var(--secondary); font-size: 12px; line-height: 1.8; margin-bottom: 25px; }
+.management-footer { display: flex; justify-content: space-between; max-width: 1184px; margin: auto; padding: 24px 48px; border-top: 1px solid var(--line); color: var(--subtle); font-size: 11px; }
+.revoke-dialog { width: min(440px,calc(100% - 32px)); padding: 30px; border: 1px solid #d8e0d6; border-radius: 14px; color: var(--ink); background: var(--surface); box-shadow: 0 24px 80px #112b2633; }
+.revoke-dialog::backdrop { background: #122b2666; backdrop-filter: blur(3px); }
+.revoke-dialog h2 { margin: 0 0 14px; font-size: 23px; }
+#revoke-description { font-size: 14px; overflow-wrap: anywhere; }
+.revoke-detail { font-size: 12px; color: var(--secondary); line-height: 1.9; }
+.dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 25px; }
+.button-danger { background: #943e32; border-color: #943e32; color: white; }
+.button-danger:hover { background: #7e3027; }
+@media(max-width:600px) { .application-actions { grid-column: 2; justify-items: start; gap: 8px; } }
+@media(max-width:600px) { .management-header { padding: 22px 22px; gap: 12px; } .management-brand { font-size: 15px; gap: 9px; } .management-account { flex-direction: column; align-items: flex-end; gap: 0; font-size: 12px; } .management-account .text-button { min-height: 28px; padding: 4px 0; } .management-main { padding: 36px 22px 40px; } .mobile-break { display: block; } .management-heading { margin-bottom: 24px; } .management-heading h1 { font-size: 32px; } .application-card { grid-template-columns: 38px minmax(0,1fr); padding: 19px 16px; gap: 12px; } .application-initial { width: 38px; height: 38px; font-size: 20px; } .application-card h2 { font-size: 16px; } .application-revoke,.revoked-label { grid-column: 2; justify-self: start; } .management-footer { padding: 22px; } .authorization-tabs { gap: 20px; } .management-login { padding: 24px; } }

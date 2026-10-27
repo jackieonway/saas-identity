@@ -16,6 +16,8 @@ use crate::{
 
 use super::{cookies, csrf_header, digest, origin, session_csrf, store};
 
+mod applications;
+
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/sso/preauth", get(preauth))
@@ -23,6 +25,15 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/sso/session", get(session))
         .route("/api/sso/logout", post(logout))
         .route("/api/sso/password", put(password))
+        .route("/api/sso/applications", get(applications::list))
+        .route(
+            "/api/sso/applications/{client}",
+            axum::routing::delete(applications::delete),
+        )
+        .route(
+            "/api/sso/applications/{client}/revoke",
+            post(applications::revoke),
+        )
         .route_layer(middleware::from_fn(no_store))
 }
 

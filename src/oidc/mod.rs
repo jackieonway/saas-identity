@@ -2,6 +2,8 @@
 
 mod account_logout;
 mod clients;
+mod consents;
+pub(crate) mod context;
 
 mod interaction;
 mod keys;

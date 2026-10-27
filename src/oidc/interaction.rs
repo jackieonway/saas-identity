@@ -1,6 +1,6 @@
 //! Browser-bound authorization requests; the UI never accepts a return URL.
 
-use super::{clients, invalid, protocol, store, OidcError, Result};
+use super::{clients, consents, context, invalid, protocol, store, OidcError, Result};
 use crate::{error::AppError, extractors::ApiJson, sso::AccountSessionProof, state::AppState};
 use axum::{
     extract::{Path, RawForm, RawQuery, State},
@@ -234,16 +234,16 @@ async fn authorize(
         return known_error(&initial, &values, issuer, "invalid_request");
     }
     let approved = if let Some(proof) = &proof {
-        sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM oidc_grants WHERE client_id=$1 AND client_policy_version=$2 AND session_id=$3 AND account_version=$4 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND scope @> $5::text[])")
-            .bind(client.id).bind(client.access_policy_version).bind(proof.id).bind(proof.account_version).bind(&scope)
-            .fetch_one(&mut *tx).await.map_err(|_|AppError::Unavailable)?
+        consents::approved(&mut tx, proof.user_id, client.id, &scope).await?
     } else {
         false
     };
-    // Offline access always requires an explicit approval interaction.
-    let consent_required = !approved
-        || prompts.contains(&"consent")
-        || scope.iter().any(|value| value == "offline_access");
+    // Approval is account/application scoped and survives global-session expiry.
+    let context_required = context::required(&mut *tx, client.id).await?;
+    if prompts.contains(&"none") && context_required {
+        return known_error(&client, &values, issuer, "interaction_required");
+    }
+    let consent_required = !approved;
     if prompts.contains(&"none") && consent_required {
         return known_error(&client, &values, issuer, "consent_required");
     }
@@ -253,7 +253,7 @@ async fn authorize(
     .execute(&mut *tx)
     .await
     .map_err(|_| AppError::Unavailable)?;
-    sqlx::query("DELETE FROM oidc_authorization_requests WHERE id IN (SELECT id FROM oidc_authorization_requests WHERE consumed_at IS NOT NULL OR expires_at<=clock_timestamp() ORDER BY expires_at LIMIT 1024)")
+    sqlx::query("DELETE FROM oidc_authorization_requests WHERE id IN (SELECT r.id FROM oidc_authorization_requests r WHERE (r.consumed_at IS NOT NULL OR r.expires_at<=clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM oidc_context_interactions c WHERE c.flow_id=r.id AND c.expires_at>clock_timestamp()) ORDER BY r.expires_at LIMIT 1024)")
         .execute(&mut *tx).await?;
     let count:i64=sqlx::query_scalar("SELECT count(*) FROM oidc_authorization_requests WHERE consumed_at IS NULL AND expires_at>clock_timestamp()")
         .fetch_one(&mut *tx).await.map_err(|_|AppError::Unavailable)?;
@@ -269,8 +269,14 @@ async fn authorize(
     let flow = store::flow(&mut *tx, id, false)
         .await?
         .ok_or_else(invalid)?;
+    context::bind(
+        &mut tx,
+        &flow,
+        values.get("context_request").map(String::as_str),
+    )
+    .await?;
     let target = if let Some(proof) = &proof {
-        if !consent_required {
+        if !consent_required && !context_required {
             if !eligible(&mut tx, &flow, proof).await? {
                 return known_error(&client, &values, issuer, "login_required");
             }
@@ -413,10 +419,36 @@ pub(super) async fn get(
             _ => {}
         }
     }
+    if let Some(user) = flow.user_id.filter(|_| account.is_some()) {
+        let approved = consents::approved(&mut tx, user, client.id, &flow.scope).await?;
+        // Revalidate durable approval on every reload; stale flow state never
+        // restores a user-revoked authorization.
+        sqlx::query("UPDATE oidc_authorization_requests SET consented_at=CASE WHEN $2 THEN COALESCE(consented_at,clock_timestamp()) ELSE NULL END WHERE id=$1")
+            .bind(flow.id).bind(approved).execute(&mut *tx).await?;
+        if approved {
+            flow.consented_at = Some(Utc::now());
+        } else {
+            flow.consented_at = None;
+        }
+    }
+    if account.is_some()
+        && flow.consented_at.is_some()
+        && context::activate(&mut tx, &flow, &browser).await?.is_some()
+    {
+        status = "CONTEXT_SELECTION_REQUIRED";
+    }
+    let context_required = context::required(&mut *tx, flow.client_id).await?;
     tx.commit().await?;
+    let selection = if status == "CONTEXT_SELECTION_REQUIRED" {
+        context::choices(&state, &flow, &browser).await?
+    } else {
+        None
+    };
     Ok(Json(
         json!({"status":status,"client":{"name":client.name,"purpose":client.purpose},"scopes":flow.scope,
-        "csrfToken":csrf(&browser,flow.id),"account":account,"expiresAt":flow.expires_at}),
+        "csrfToken":csrf(&browser,flow.id),"account":account,"expiresAt":flow.expires_at,
+        "contextSelectionRequired":context_required,"consentRemembered":flow.consented_at.is_some(),
+        "contextSelection":selection.map(|s|json!({"mode":s.intent["kind"],"members":s.members,"expiresAt":s.expires_at}))}),
     ))
 }
 
@@ -424,6 +456,8 @@ pub(super) async fn get(
 #[serde(deny_unknown_fields)]
 pub(super) struct Decision {
     action: String,
+    #[serde(default, rename = "membershipId")]
+    membership_id: Option<String>,
 }
 
 pub(super) async fn submit(
@@ -437,7 +471,10 @@ pub(super) async fn submit(
     let id = clients::canonical_id(&raw).map_err(|_| AppError::bad_request("授权流程 ID 无效"))?;
     let browser = browser(&headers)?.ok_or_else(|| AppError::forbidden("缺少浏览器绑定"))?;
     let supplied_csrf = csrf_header(&headers)?;
-    if !matches!(body.action.as_str(), "approve" | "deny" | "restart") {
+    if !matches!(
+        body.action.as_str(),
+        "consent" | "approve" | "deny" | "restart"
+    ) {
         return Err(AppError::bad_request("授权操作无效"));
     }
     let initial = store::flow(&state.pool, id, false)
@@ -450,13 +487,40 @@ pub(super) async fn submit(
         return Err(AppError::forbidden("授权 CSRF 证明无效"));
     }
     let candidate = crate::sso::browser_proof(&state, &headers).await?;
+    let membership = body
+        .membership_id
+        .as_deref()
+        .map(clients::canonical_id)
+        .transpose()
+        .map_err(|_| AppError::bad_request("成员标识必须是规范 UUIDv7"))?;
+    if body.action != "approve" && membership.is_some() {
+        return Err(AppError::bad_request("此操作不接受成员选择"));
+    }
+    if body.action == "approve" {
+        if context::required(&state.pool, initial.client_id).await?
+            && initial.consented_at.is_none()
+        {
+            return Err(AppError::conflict("请先确认应用授权，再选择租户和组织"));
+        }
+        context::prepare(
+            &state,
+            &initial,
+            &browser,
+            candidate
+                .as_ref()
+                .ok_or_else(|| AppError::unauthorized("请先确认账号"))?,
+            membership,
+            &headers,
+        )
+        .await?;
+    }
     let mut tx = state
         .pool
         .begin()
         .await
         .map_err(|_| AppError::Unavailable)?;
     // Approval always holds the original account lock before the client/flow.
-    if body.action == "approve" {
+    if matches!(body.action.as_str(), "approve" | "consent") {
         let user = initial
             .user_id
             .ok_or_else(|| AppError::unauthorized("请先登录并确认账号"))?;
@@ -479,6 +543,37 @@ pub(super) async fn submit(
         return Err(AppError::conflict("授权请求已消费或客户端策略已变化"));
     }
     let target = match body.action.as_str() {
+        "consent" => {
+            if !context::required(&mut *tx, flow.client_id).await? || flow.consented_at.is_some() {
+                return Err(AppError::conflict("当前流程不需要重复确认应用授权"));
+            }
+            let candidate = candidate.ok_or_else(|| AppError::unauthorized("账号认证已失效"))?;
+            if flow.session_id != Some(candidate.id)
+                || flow.user_id != Some(candidate.user_id)
+                || flow.account_version != Some(candidate.account_version)
+            {
+                return Err(AppError::unauthorized("原授权账号已变化，请重新发起"));
+            }
+            let proof = store::session(
+                &mut *tx,
+                candidate.id,
+                candidate.user_id,
+                candidate.account_version,
+            )
+            .await
+            .map_err(flow_error)?;
+            if !eligible(&mut tx, &flow, &proof).await? {
+                return Err(AppError::unauthorized("请重新认证账号"));
+            }
+            sqlx::query("UPDATE oidc_authorization_requests SET consented_at=clock_timestamp() WHERE id=$1 AND consented_at IS NULL")
+                .bind(flow.id).execute(&mut *tx).await?;
+            consents::save(&mut tx, proof.user_id, client.id, &flow.scope).await?;
+            store::account_audit(&mut tx, &proof, &headers, "OIDC_CONSENT", client.id)
+                .await
+                .map_err(flow_error)?;
+            tx.commit().await?;
+            return Ok(Json(json!({"continue":true})));
+        }
         "deny" => protocol::callback(
             &flow.redirect_uri,
             &flow.state,
@@ -493,6 +588,7 @@ pub(super) async fn submit(
                 .bind(next).bind(&flow.browser_hash).bind(super::digest(&csrf(&browser,next))).bind(flow.client_id).bind(flow.client_policy_version)
                 .bind(&flow.redirect_uri).bind(&flow.scope).bind(&flow.state).bind(&flow.nonce).bind(&flow.code_challenge).bind(flow.max_age)
                 .bind(state.config.oidc_interaction_ttl_seconds as f64).execute(&mut *tx).await?;
+            context::restart(&mut tx, flow.id, next).await?;
             format!("/sso/login?flow={next}")
         }
         _ => {
@@ -513,6 +609,13 @@ pub(super) async fn submit(
             .map_err(flow_error)?;
             if !eligible(&mut tx, &flow, &proof).await? {
                 return Err(AppError::unauthorized("请重新认证账号"));
+            }
+            if context::required(&mut *tx, flow.client_id).await? {
+                if !consents::approved(&mut tx, proof.user_id, client.id, &flow.scope).await? {
+                    return Err(AppError::conflict("应用授权已撤销，请重新确认"));
+                }
+            } else {
+                consents::save(&mut tx, proof.user_id, client.id, &flow.scope).await?;
             }
             let (code, code_expiry) = store::code(&mut tx, &state, &flow, &proof)
                 .await

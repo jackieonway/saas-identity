@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "backend": "Explicit HTTP fixtures; real persistence checked separately",
+  "browser": "156.0.8078.48",
+  "checks": [
+    {
+      "name": "single-tenant-skips-tenant-step",
+      "status": "passed"
+    },
+    {
+      "name": "single-organization-enters-after-first-consent",
+      "status": "passed"
+    },
+    {
+      "name": "remembered-single-identity-needs-no-clicks",
+      "status": "passed"
+    },
+    {
+      "name": "remembered-approval-survives-reload-search-does-not-auto-select",
+      "status": "passed"
+    },
+    {
+      "name": "tenant-with-one-organization-enters-directly",
+      "status": "passed"
+    },
+    {
+      "name": "multiple-tenants-and-organizations-require-choice",
+      "status": "passed"
+    },
+    {
+      "name": "no-members-never-auto-approves",
+      "status": "passed"
+    },
+    {
+      "name": "customer-and-hostile-names-render-as-text",
+      "status": "passed"
+    },
+    {
+      "name": "mobile-single-tenant-multiple-organizations",
+      "status": "passed"
+    },
+    {
+      "name": "application-manager-confirmation-and-revoked-history",
+      "status": "passed"
+    },
+    {
+      "name": "revoked-record-delete-cancel-confirm-empty-state",
+      "status": "passed"
+    }
+  ]
+}

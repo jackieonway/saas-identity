@@ -39,6 +39,9 @@
           <h1 id="page-title" tabindex="-1">正在准备安全登录</h1>
           <p id="page-description" class="page-description">请稍候，即将为您打开认证页面。</p>
         </header>
+        <ol id="auth-steps" class="auth-steps" aria-label="登录步骤" hidden>
+          <li>账号登录</li><li>应用授权</li><li>选择租户</li><li>选择组织</li>
+        </ol>
 
         <section id="request-context" class="request-context" aria-label="正在连接的应用" hidden>
           <span class="application-symbol" aria-hidden="true">↗</span>
@@ -73,13 +76,25 @@
             <div class="account-details"><p class="field-caption">使用当前账号</p><p id="account-name" class="account-name"></p><p id="account-identifier" class="muted" hidden></p></div>
             <button id="change-account" class="text-button" type="button" hidden>切换账号</button>
           </div>
-          <div class="permissions">
+          <section id="context-selection" class="context-selection" aria-labelledby="context-title" hidden>
+            <div class="selection-heading"><h2 id="context-title">选择工作身份</h2><span id="selection-count" class="selection-count" aria-live="polite"></span></div>
+            <p id="selection-hint" class="selection-hint">先选择租户，再选择该租户下的组织。</p>
+            <div class="selection-filters">
+              <div id="tenant-step"><select id="selection-tenant" hidden aria-hidden="true" tabindex="-1"></select><div id="tenant-choices" class="tenant-choices" aria-label="可访问的租户"></div></div>
+              <div id="organization-step" hidden><p id="selected-tenant" class="selected-tenant"></p><label for="selection-search">查找组织</label><input id="selection-search" type="search" maxlength="200" placeholder="输入组织名称或路径" autocomplete="off" aria-controls="selection-members"></div>
+            </div>
+            <fieldset id="organization-choices" class="selection-fieldset" hidden><legend class="sr-only">选择组织与成员身份</legend><div id="selection-members" class="selection-members"></div></fieldset>
+            <p id="selection-empty" class="selection-empty" hidden></p>
+            <p id="selection-summary" class="selection-summary" role="status"></p>
+          </section>
+          <div id="permissions" class="permissions">
             <h2>此应用希望获取</h2>
             <ul id="scope-list" class="scope-list"></ul>
-            <p class="permission-note">仅分享您在此确认的账号信息。应用内可用的功能仍以您的实际访问权限为准。</p>
+            <p class="permission-note">授权后，下次访问将直接继续。您随时可以在<a href="/sso/applications" target="_blank" rel="noopener">应用授权管理</a>中撤销。</p>
           </div>
           <form id="consent-form" method="post">
             <button id="consent-allow" class="button button-primary" type="submit" name="decision" value="allow"><span>同意并继续</span><span aria-hidden="true">→</span></button>
+            <button id="selection-back" class="text-button selection-back" type="button" hidden>返回选择租户</button>
             <button id="consent-deny" class="button button-secondary" type="button">取消访问</button>
           </form>
         </section>
@@ -96,7 +111,7 @@
 
         <div id="recovery-actions" class="recovery-actions" hidden><button id="retry-button" class="button button-secondary" type="button">重新载入</button></div>
         <noscript><p class="notice notice-error">请在浏览器中启用 JavaScript，然后重新打开登录页面以继续。</p></noscript>
-        <footer class="auth-footer"><span class="footer-rule" aria-hidden="true"></span><p>安全认证，由您确认</p></footer>
+        <footer class="auth-footer"><span class="footer-rule" aria-hidden="true"></span><p>安全认证，由您确认</p><a href="/sso/applications" target="_blank" rel="noopener">管理应用授权 ↗</a></footer>
       </section>
     </main>
     <div id="screenreader-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
