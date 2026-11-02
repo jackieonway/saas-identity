@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>账号安全设置 · 认证中心</title>
+  <link rel="stylesheet" href="/sso/assets/identity.css">
+  <link rel="stylesheet" href="/sso/assets/applications.css">
+  <script src="/sso/assets/security.js" defer></script>
+</head>
+<body class="applications-page">
+  <a class="skip-link" href="#main">跳到账号安全设置</a>
+  <header class="management-header">
+    <a class="management-brand" href="/sso/applications"><span class="brand-mark" aria-hidden="true"></span><span>认证中心<small>ACCOUNT SECURITY</small></span></a>
+    <a class="text-button" href="/sso/applications">应用授权</a>
+  </header>
+  <main id="main" class="management-main" tabindex="-1">
+    <section class="management-heading">
+      <p class="eyebrow">账号安全</p>
+      <h1>为登录添加<br class="mobile-break">第二道验证。</h1>
+      <p class="management-intro">使用兼容 TOTP 的身份验证器。恢复码只显示一次，请离线保管。</p>
+    </section>
+    <p id="message" class="notice" role="status" hidden></p>
+    <p id="error" class="notice notice-error" role="alert" hidden></p>
+    <div id="loading" class="loading-state" role="status"><span class="loading-dot" aria-hidden="true"></span>正在读取安全状态…</div>
+    <section id="security-panel" class="management-login" hidden>
+      <p class="eyebrow">身份验证器</p>
+      <h2 id="factor-title">尚未启用</h2>
+      <p id="factor-description">启用后，登录时需要输入身份验证器验证码。恢复码可以分别使用一次。</p>
+      <p id="recovery-count" class="form-help"></p>
+      <button id="start-enrollment" class="button button-primary" type="button">开始绑定身份验证器</button>
+      <section id="enrollment-panel" hidden aria-labelledby="enrollment-title">
+        <h3 id="enrollment-title">在身份验证器中添加账号</h3>
+        <p>在应用中选择手动输入密钥，或使用身份验证器支持的导入方式。</p>
+        <div class="security-secret"><span>一次性绑定密钥</span><code id="secret"></code></div>
+        <details><summary>查看 otpauth URI</summary><code id="otpauth-uri" class="security-uri"></code></details>
+        <form id="confirm-form">
+          <div class="form-field"><label for="confirm-code">输入应用显示的 6 位验证码</label><input id="confirm-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required></div>
+          <button class="button button-primary" type="submit">确认绑定</button>
+        </form>
+      </section>
+      <section id="recovery-panel" hidden aria-labelledby="recovery-title">
+        <h3 id="recovery-title">请立即保存恢复码</h3>
+        <p class="notice">这些恢复码仅显示这一次。每个恢复码使用后立即失效。</p>
+        <ul id="recovery-codes" class="security-codes"></ul>
+        <button id="recovery-done" class="button button-secondary" type="button">我已保存</button>
+      </section>
+      <form id="disable-form" hidden>
+        <div class="form-field"><label for="disable-code">停用需要新的 TOTP 验证码</label><input id="disable-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required></div>
+        <button class="button button-secondary" type="submit">停用身份验证器</button>
+      </form>
+    </section>
+    <section id="login-needed" class="management-login" hidden>
+      <h2>请先登录</h2>
+      <p>打开应用授权管理，登录账号后再返回此页。</p>
+      <a class="button button-primary" href="/sso/applications">打开应用授权管理</a>
+    </section>
+    <noscript><p class="notice notice-error">请启用 JavaScript 后管理账号安全设置。</p></noscript>
+  </main>
+  <footer class="management-footer"><a href="/sso/applications">应用授权管理</a><span>认证中心</span></footer>
+</body>
+</html>

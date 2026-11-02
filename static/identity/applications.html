@@ -14,10 +14,10 @@
       <div class="authorization-toolbar"><div class="authorization-tabs" role="group" aria-label="授权状态"><button id="active-tab" class="authorization-tab" type="button" aria-pressed="true">已授权 <span id="active-count">0</span></button><button id="revoked-tab" class="authorization-tab" type="button" aria-pressed="false">已撤销 <span id="revoked-count">0</span></button></div><button id="refresh" class="text-button" type="button">刷新列表 ↻</button></div>
       <div id="application-list" class="application-list" aria-live="polite"></div>
       <div id="empty" class="authorization-empty" hidden><span class="empty-symbol" aria-hidden="true">↗</span><h2 id="empty-title">还没有已授权的应用</h2><p id="empty-description">在应用中完成首次登录授权后，您可以在这里统一管理。</p></div>
-      <aside class="authorization-note"><span class="note-symbol" aria-hidden="true">i</span><div><h2>授权只需确认一次</h2><p>退出登录或切换组织不会取消应用授权。撤销后，该应用当前登录会失效；下次访问时，需要由您重新确认授权。</p></div></aside>
+      <aside class="authorization-note"><span class="note-symbol" aria-hidden="true">i</span><div><h2>授权只需确认一次</h2><p>退出登录或切换组织不会取消应用授权。撤销会使同意组内所有客户端的凭据失效；其他应用不受影响。下次访问时，需要由您重新确认授权。</p></div></aside>
     </section>
     <noscript><p class="notice notice-error">请启用 JavaScript 后管理您的应用授权。</p></noscript>
   </main>
-  <footer class="management-footer"><span>认证中心</span><span>连接您信任的应用</span></footer>
-  <dialog id="revoke-dialog" class="revoke-dialog" aria-labelledby="revoke-title" aria-describedby="revoke-description"><form method="dialog"><p class="eyebrow">取消应用访问</p><h2 id="revoke-title">撤销这份授权？</h2><p id="revoke-description"></p><p class="revoke-detail">该应用当前登录会失效。您仍可以在下次访问时重新授权，其他应用不受影响。</p><div class="dialog-actions"><button id="cancel-revoke" class="button button-secondary" value="cancel">保留授权</button><button id="confirm-revoke" class="button button-danger" type="button">确认撤销</button></div></form></dialog>
+  <footer class="management-footer"><a href="/sso/security">账号安全设置</a><span>认证中心 · 连接您信任的应用</span></footer>
+  <dialog id="revoke-dialog" class="revoke-dialog" aria-labelledby="revoke-title" aria-describedby="revoke-description"><form method="dialog"><p class="eyebrow">取消同意组访问</p><h2 id="revoke-title">撤销这组应用授权？</h2><p id="revoke-description"></p><p class="revoke-detail">同组客户端的当前凭据将失效。其他应用不受影响。</p><div class="dialog-actions"><button id="cancel-revoke" class="button button-secondary" value="cancel">保留授权</button><button id="confirm-revoke" class="button button-danger" type="button">确认撤销</button></div></form></dialog>
 </body></html>

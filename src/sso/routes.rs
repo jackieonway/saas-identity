@@ -15,8 +15,10 @@ use crate::{
 };
 
 use super::{cookies, csrf_header, digest, origin, session_csrf, store};
+use crate::sso::mfa as totp;
 
-mod applications;
+mod consents;
+mod mfa;
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
@@ -25,14 +27,20 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/sso/session", get(session))
         .route("/api/sso/logout", post(logout))
         .route("/api/sso/password", put(password))
-        .route("/api/sso/applications", get(applications::list))
+        .route("/api/sso/mfa/status", get(mfa::status))
+        .route("/api/sso/mfa/enrollment", post(mfa::start_enrollment))
         .route(
-            "/api/sso/applications/{client}",
-            axum::routing::delete(applications::delete),
+            "/api/sso/mfa/enrollment/confirm",
+            post(mfa::confirm_enrollment),
         )
+        .route("/api/sso/mfa/step-up", post(mfa::step_up))
+        .route("/api/sso/mfa/disable", post(mfa::disable))
+        .route("/api/sso/consents", get(consents::list))
+        .route("/api/sso/consent-operations/{id}", get(consents::operation))
+        .route("/api/sso/consents/{consent}/revoke", post(consents::revoke))
         .route(
-            "/api/sso/applications/{client}/revoke",
-            post(applications::revoke),
+            "/api/sso/consents/{consent}",
+            axum::routing::delete(consents::delete_display),
         )
         .route_layer(middleware::from_fn(no_store))
 }
@@ -97,6 +105,8 @@ async fn preauth(State(state): State<AppState>, headers: HeaderMap) -> Result<Re
 struct Login {
     username: String,
     password: String,
+    #[serde(default, rename = "mfaCode")]
+    mfa_code: Option<String>,
 }
 
 async fn login(
@@ -182,16 +192,43 @@ async fn login(
             return Err(AppError::unauthorized("账号认证状态已变更，请重新登录"));
         }
     }
+    let mfa_enabled = totp::factor_enabled(&mut tx, credential.id).await?;
+    let mfa_method = if mfa_enabled {
+        let Some(code) = body.mfa_code.as_deref() else {
+            return Ok((
+                axum::http::StatusCode::PRECONDITION_REQUIRED,
+                Json(json!({"error":"mfa_required"})),
+            )
+                .into_response());
+        };
+        let method = totp::consume_code(&state, &mut tx, credential.id, code).await?;
+        let Some(method) = method else {
+            state.login_limits.record_failure(&input_key);
+            state.login_limits.record_failure(&account_key);
+            return Err(AppError::unauthorized("用户名、密码或验证码不正确"));
+        };
+        Some(method.to_owned())
+    } else if body
+        .mfa_code
+        .as_deref()
+        .is_some_and(|code| !code.trim().is_empty())
+    {
+        state.login_limits.record_failure(&input_key);
+        state.login_limits.record_failure(&account_key);
+        return Err(AppError::unauthorized("用户名、密码或验证码不正确"));
+    } else {
+        None
+    };
     sqlx::query(
         "UPDATE users SET last_login_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1",
     )
     .bind(credential.id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO sso_sessions(id,user_id,token_hash,csrf_hash,account_version,authenticated_at,expires_at) \
-        VALUES($1,$2,$3,$4,$5,clock_timestamp(),clock_timestamp()+$6*interval '1 second')")
+    sqlx::query("INSERT INTO sso_sessions(id,user_id,token_hash,csrf_hash,account_version,authenticated_at,mfa_verified_at,mfa_method,expires_at) \
+        VALUES($1,$2,$3,$4,$5,clock_timestamp(),CASE WHEN $6::text IS NULL THEN NULL ELSE clock_timestamp() END,$6,clock_timestamp()+$7*interval '1 second')")
         .bind(crate::util::uuid7::new_uuid()).bind(credential.id).bind(&hash).bind(digest(&csrf))
-        .bind(credential.account_version).bind(state.config.sso_session_ttl_seconds as f64)
+        .bind(credential.account_version).bind(mfa_method).bind(state.config.sso_session_ttl_seconds as f64)
         .execute(&mut *tx).await?;
     let session = store::session(&mut *tx, &hash).await?;
     write_audit(

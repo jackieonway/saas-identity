@@ -66,6 +66,11 @@
             </div>
             <p id="password-error" class="field-error" hidden></p>
           </div>
+          <div id="mfa-field" class="form-field" hidden>
+            <label for="mfa-code">身份验证器验证码或一次性恢复码</label>
+            <input id="mfa-code" name="mfaCode" type="text" autocomplete="one-time-code" inputmode="numeric" maxlength="80" spellcheck="false" aria-describedby="mfa-error" placeholder="输入验证码或恢复码">
+            <p id="mfa-error" class="field-error" hidden></p>
+          </div>
           <button id="login-submit" class="button button-primary" type="submit"><span>登录并继续</span><span aria-hidden="true">→</span></button>
           <p id="login-help" class="form-help">登录后，您可以查看并确认应用申请的访问权限。</p>
         </form>

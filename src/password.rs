@@ -22,6 +22,8 @@ const MAX_PASSWORD_HASH_BYTES: usize = 1024;
 pub(crate) struct PasswordService {
     admitted: Arc<Semaphore>,
     running: Arc<Semaphore>,
+    capacity: usize,
+    concurrency: usize,
     queue_timeout: Duration,
     execution_timeout: Duration,
     #[cfg(test)]
@@ -84,6 +86,8 @@ impl PasswordService {
         Self {
             admitted: Arc::new(Semaphore::new(capacity)),
             running: Arc::new(Semaphore::new(concurrency)),
+            capacity,
+            concurrency,
             queue_timeout,
             execution_timeout,
             #[cfg(test)]
@@ -94,6 +98,18 @@ impl PasswordService {
                 changed: Arc::new(tokio::sync::Notify::new()),
             },
         }
+    }
+
+    /// Reserved execution permits include work waiting for Tokio's blocking
+    /// executor. Timed-out callers retain their permits until that work exits.
+    pub(crate) fn operational_counts(&self) -> (usize, usize) {
+        let admitted = self
+            .capacity
+            .saturating_sub(self.admitted.available_permits());
+        let running = self
+            .concurrency
+            .saturating_sub(self.running.available_permits());
+        (running, admitted.saturating_sub(running))
     }
 
     #[cfg(test)]
@@ -200,13 +216,24 @@ impl PasswordService {
             execution.finish(crate::observability::outcome(&result));
             result
         });
-        tokio::time::timeout(self.execution_timeout, job)
+        let mut response = crate::observability::timer(crate::observability::Stage::PasswordResult);
+        let joined = tokio::time::timeout(self.execution_timeout, job)
             .await
             .map_err(|_| {
                 tracing::warn!(event = "password_execution_timeout");
+                response.outcome(crate::observability::Outcome::Timeout);
                 AppError::RateLimited(1)
             })?
-            .map_err(|error| AppError::Server(anyhow::anyhow!("password worker failed: {error}")))?
+            .map_err(|_| AppError::Server(anyhow::anyhow!("password worker failed")));
+        let result = match joined {
+            Ok(result) => result,
+            Err(error) => {
+                response.finish(crate::observability::Outcome::Failed);
+                return Err(error);
+            }
+        };
+        response.finish(crate::observability::outcome(&result));
+        result
     }
 }
 

@@ -1,18 +1,40 @@
 //! OIDC account authentication; tokens never establish platform membership.
 
-mod account_logout;
-mod clients;
-mod consents;
 pub(crate) mod context;
 
-mod interaction;
 mod keys;
+mod oauth;
 mod protocol;
 mod store;
-mod tokens;
+pub(crate) mod subjects;
 
 pub(crate) use keys::KeySet;
 pub(crate) use protocol::routes;
+
+pub(crate) async fn sign_delivery(
+    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    claims: serde_json::Value,
+    expires: chrono::DateTime<chrono::Utc>,
+    logout: bool,
+) -> std::result::Result<String, AppError> {
+    keys::sign_typed(
+        state,
+        tx,
+        claims,
+        expires,
+        if logout {
+            "logout+jwt"
+        } else {
+            "identity-delivery+jwt"
+        },
+    )
+    .await
+    .map_err(|error| match error {
+        OidcError::App(error) => error,
+        _ => AppError::Unavailable,
+    })
+}
 
 use axum::{
     http::StatusCode,
@@ -104,7 +126,7 @@ pub(crate) async fn initialize(state: &AppState) -> std::result::Result<(), AppE
     }
     let issuer = enabled(state)?;
     let pinned: Option<String> =
-        sqlx::query_scalar("SELECT issuer FROM oidc_provider_settings WHERE singleton")
+        sqlx::query_scalar("SELECT issuer FROM auth_provider_settings WHERE singleton")
             .fetch_optional(&state.pool)
             .await
             .map_err(|_| AppError::Unavailable)?;
@@ -120,9 +142,6 @@ async fn authority(state: &AppState) -> std::result::Result<&str, AppError> {
     enabled(state)
 }
 
-fn secret() -> std::result::Result<String, AppError> {
-    crate::sso::opaque_secret()
-}
 fn digest(value: &str) -> String {
     crate::util::hash::sha256_hex(value)
 }
@@ -138,6 +157,14 @@ fn equal(left: &str, right: &str) -> bool {
             == 0
 }
 
+fn canonical_id(raw: &str) -> Result<uuid::Uuid> {
+    let id = uuid::Uuid::parse_str(raw).map_err(|_| invalid())?;
+    if !crate::util::uuid7::is_uuid_v7(id) || id.to_string() != raw {
+        return Err(invalid());
+    }
+    Ok(id)
+}
+
 fn canonical_secret(value: &str) -> bool {
     value.len() == 64
         && value
@@ -145,14 +172,14 @@ fn canonical_secret(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Account-only access proof for the platform's customer resource consumer.
+/// Canonical account projection for the platform's customer resource consumer.
 /// This port cannot inspect or choose any platform membership.
 pub(crate) async fn customer_access_proof(
     state: &AppState,
     access: &str,
     expected_client: uuid::Uuid,
 ) -> std::result::Result<serde_json::Value, AppError> {
-    let issuer = authority(state).await?;
+    authority(state).await?;
     let invalid = || AppError::unauthorized("客户账号认证来源无效或已失效");
     if !canonical_secret(access) {
         return Err(invalid());
@@ -160,26 +187,39 @@ pub(crate) async fn customer_access_proof(
     if state.config.service_expected_customer_client != Some(expected_client) {
         return Err(invalid());
     }
-    let proof = tokens::live(&state.pool, &digest(access), false)
-        .await
-        .map_err(|_| AppError::Unavailable)?
-        .filter(|p| {
-            p.client_id == expected_client
-                && p.client_purpose == "CUSTOMER_PORTAL"
-                && p.allowed_member_types == ["CUSTOMER"]
-                && ["openid", "profile"]
-                    .iter()
-                    .all(|scope| p.scope.iter().any(|p| p == scope))
-        })
-        .ok_or_else(invalid)?;
-    Ok(
-        json!({"contractVersion":"customer-access-proof/1","tokenType":"access_token",
-        "clientPurpose":proof.client_purpose,"allowedMemberTypes":proof.allowed_member_types,"scope":proof.scope,
-        "source":{"issuer":issuer,"clientId":proof.client_id,"grantId":proof.grant_id,"globalSessionId":proof.session_id,
-            "userId":proof.user_id,"accountVersion":proof.account_version.to_string(),"clientPolicyVersion":proof.client_policy_version.to_string(),
-            "authTime":proof.auth_time.timestamp(),"expiresAt":proof.expires_at},
-        "account":{"id":proof.user_id,"username":proof.username,"realName":proof.real_name,"avatar":proof.avatar}}),
-    )
+    oauth::customer_proof::access_proof(state, access, expected_client).await
+}
+
+/// Online employee account proof for the platform BFF. The pairwise public
+/// subject stays opaque; the internal account ID is returned only to the
+/// separately registered context-source service over its private channel.
+pub(crate) async fn platform_account_proof(
+    state: &AppState,
+    access: &str,
+    expected_client: uuid::Uuid,
+) -> std::result::Result<serde_json::Value, AppError> {
+    authority(state).await?;
+    oauth::platform_account_proof(state, access, expected_client).await
+}
+
+pub(crate) async fn customer_account_proof(
+    state: &AppState,
+    access: &str,
+    expected_client: uuid::Uuid,
+) -> std::result::Result<serde_json::Value, AppError> {
+    authority(state).await?;
+    oauth::customer_proof::account_proof(state, access, expected_client).await
+}
+
+pub(crate) async fn resource_access_proof(
+    state: &AppState,
+    token: &str,
+    resource: &str,
+    audience: &str,
+    scope: &str,
+) -> std::result::Result<serde_json::Value, AppError> {
+    authority(state).await?;
+    oauth::resource_proof::prove(state, token, resource, audience, scope).await
 }
 
 async fn deadline(

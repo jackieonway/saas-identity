@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub(crate) struct IdentityState {
@@ -12,7 +8,8 @@ pub(crate) struct IdentityState {
     pub(crate) authentication: Arc<dyn crate::platform_accounts::AuthenticationPort>,
     pub(crate) accounts: Arc<dyn crate::platform_accounts::AccountAdministrationPort>,
     pub(crate) login_limits: Arc<crate::login_limits::LoginLimits>,
-    introspection_attempts: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    pub(crate) auth_limits: Arc<crate::login_limits::LoginLimits>,
+    pub(crate) auth_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) internal_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) context_platform: Arc<dyn crate::oidc::context::bridge::SelectionPort>,
     pub(crate) context_slots: Arc<tokio::sync::Semaphore>,
@@ -49,34 +46,24 @@ impl IdentityState {
                     user_failure_limit: config.login_user_failures,
                 },
             )),
+            auth_limits: Arc::new(crate::login_limits::LoginLimits::new(
+                crate::login_limits::LoginLimitOptions {
+                    max_entries: config.auth_rate_max_entries,
+                    ttl: Duration::from_secs(config.auth_rate_window_seconds),
+                    source_limit: config.auth_source_requests,
+                    user_failure_limit: config.auth_client_requests,
+                },
+            )),
+            auth_slots: Arc::new(tokio::sync::Semaphore::new(config.auth_request_concurrency)),
             config,
-            introspection_attempts: Arc::new(Mutex::new(HashMap::new())),
             internal_slots: Arc::new(tokio::sync::Semaphore::new(16)),
         }
     }
 
-    pub(crate) fn record_introspection_attempt(&self, key: &str) -> Option<i64> {
-        let now = Instant::now();
-        let Ok(mut map) = self.introspection_attempts.lock() else {
-            return Some(60);
-        };
-        if map.len() >= 4096 && !map.contains_key(key) {
-            map.retain(|_, entries| {
-                entries
-                    .iter()
-                    .any(|old| now.duration_since(*old) < Duration::from_secs(60))
-            });
-            if map.len() >= 4096 {
-                return Some(60);
-            }
-        }
-        let entries = map.entry(key.to_owned()).or_default();
-        entries.retain(|old| now.duration_since(*old) < Duration::from_secs(60));
-        if entries.len() >= self.config.oauth_introspection_attempts_per_minute {
-            Some(1)
-        } else {
-            entries.push(now);
-            None
+    pub(crate) fn admit_protocol_client(&self, client: &str) -> Result<(), crate::error::AppError> {
+        match self.auth_limits.record_failure(client) {
+            Some(retry) => Err(crate::error::AppError::RateLimited(retry)),
+            None => Ok(()),
         }
     }
 }

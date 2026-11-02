@@ -2,6 +2,13 @@ use crate::{error::AppError, state::IdentityState};
 use axum::{extract::State, Json};
 use serde_json::{json, Value};
 
+pub(crate) async fn live() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(json!({"status":"alive"})),
+    )
+}
+
 pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
     let ready:bool=sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM public.identity_deployment_state d JOIN pg_catalog.pg_roles r ON r.rolname=current_user \
@@ -42,27 +49,66 @@ pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
          AND NOT pg_catalog.has_column_privilege(current_user,'public.users','id','UPDATE') \
          AND NOT pg_catalog.has_table_privilege(current_user,'public.users','DELETE,TRUNCATE,TRIGGER') \
          AND pg_catalog.has_table_privilege(current_user,'public.sso_sessions','SELECT') \
-         AND pg_catalog.has_table_privilege(current_user,'public.oidc_grants','SELECT') \
-         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','SELECT') \
-         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','INSERT') \
-         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','UPDATE') \
-         AND pg_catalog.has_table_privilege(current_user,'public.oidc_consents','DELETE') \
+         AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY[
+           'auth_applications','auth_application_admissions','auth_resources','auth_scopes','auth_clients','auth_client_credentials',
+           'auth_client_permissions','auth_consent_groups','auth_consent_group_clients','auth_consents',
+           'auth_consent_scopes','auth_subject_sectors','auth_subject_links','auth_authorization_requests','auth_context_interactions',
+           'auth_authorization_codes','auth_grants','auth_grant_scopes','auth_access_tokens',
+           'auth_access_token_scopes','auth_refresh_families','auth_refresh_tokens', \
+           'auth_totp_enrollments','auth_totp_factors','auth_totp_recovery_codes','auth_mfa_recovery_receipts', \
+           'auth_mfa_recovery_approvals','auth_invitations']::text[]) AS target(name) \
+           WHERE NOT (pg_catalog.has_table_privilege(current_user,'public.'||target.name,'SELECT') \
+             AND pg_catalog.has_table_privilege(current_user,'public.'||target.name,'INSERT') \
+             AND pg_catalog.has_table_privilege(current_user,'public.'||target.name,'UPDATE') \
+             AND pg_catalog.has_table_privilege(current_user,'public.'||target.name,'DELETE'))) \
+         AND EXISTS(SELECT 1 FROM public.identity_deployment_state d WHERE d.identity_runtime=current_user AND NOT EXISTS(
+           SELECT 1 FROM unnest(ARRAY[
+             'auth_applications','auth_application_admissions','auth_resources','auth_scopes','auth_clients','auth_client_credentials',
+             'auth_client_permissions','auth_consent_groups','auth_consent_group_clients','auth_consents',
+             'auth_consent_scopes','auth_consent_revocation_outbox','auth_subject_sectors','auth_subject_links','auth_authorization_requests','auth_context_interactions',
+             'auth_authorization_codes','auth_grants','auth_grant_scopes','auth_access_tokens',
+             'auth_access_token_scopes','auth_refresh_families','auth_refresh_tokens', \
+             'auth_totp_enrollments','auth_totp_factors','auth_totp_recovery_codes','auth_mfa_recovery_receipts', \
+             'auth_mfa_recovery_approvals','auth_security_notification_outbox','auth_invitations']::text[]) AS target(name)
+             WHERE pg_catalog.has_any_column_privilege(d.platform_runtime,'public.'||target.name,'SELECT,INSERT,UPDATE,REFERENCES') \
+                OR pg_catalog.has_table_privilege(d.platform_runtime,'public.'||target.name,'DELETE,TRUNCATE,TRIGGER,REFERENCES'))) \
+         AND public.identity_phase20_schema_ready() \
          AND pg_catalog.has_table_privilege(current_user,'public.identity_service_clients','SELECT') \
+         AND pg_catalog.has_column_privilege(current_user,'public.identity_service_clients','allowed_auth_resources','SELECT') \
          AND pg_catalog.has_table_privilege(current_user,'public.identity_audit_logs','INSERT') \
+         AND pg_catalog.has_function_privilege(current_user,'public.identity_auth_invitation_intent_active(uuid,uuid,text,text,text,uuid,uuid)','EXECUTE') \
+         AND pg_catalog.has_function_privilege(current_user,'public.identity_auth_review_intent_active(uuid,uuid,text,text,text,jsonb)','EXECUTE') \
+         AND EXISTS(SELECT 1 FROM public.identity_deployment_state d WHERE d.identity_runtime=current_user \
+           AND NOT pg_catalog.has_function_privilege(d.platform_runtime,'public.identity_auth_review_intent_active(uuid,uuid,text,text,text,jsonb)','EXECUTE') \
+           AND (SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.oid='public.identity_auth_review_intent_active(uuid,uuid,text,text,text,jsonb)'::regprocedure) \
+               =(SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname=d.platform_owner) \
+           AND pg_catalog.has_function_privilege(d.platform_runtime,'public.identity_admin_assurance(uuid,uuid,uuid,bigint,uuid,bigint,text)','EXECUTE') \
+           AND pg_catalog.has_table_privilege(d.platform_runtime,'public.platform_auth_release_bindings','SELECT') \
+           AND NOT pg_catalog.has_any_column_privilege(d.platform_runtime,'public.platform_auth_release_bindings','INSERT,UPDATE,REFERENCES') \
+           AND NOT pg_catalog.has_table_privilege(d.platform_runtime,'public.platform_auth_release_bindings','DELETE,TRUNCATE,TRIGGER')) \
+         AND EXISTS(SELECT 1 FROM public.identity_deployment_state d WHERE d.identity_runtime=current_user \
+           AND NOT pg_catalog.has_function_privilege(d.platform_runtime,'public.identity_auth_invitation_intent_active(uuid,uuid,text,text,text,uuid,uuid)','EXECUTE') \
+           AND (SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.oid='public.identity_auth_invitation_intent_active(uuid,uuid,text,text,text,uuid,uuid)'::regprocedure) \
+               =(SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname=d.platform_owner)) \
+         AND pg_catalog.has_table_privilege(current_user,'public.identity_consent_command_receipts','SELECT') \
+         AND pg_catalog.has_table_privilege(current_user,'public.identity_consent_command_receipts','INSERT') \
+         AND NOT pg_catalog.has_table_privilege(current_user,'public.identity_consent_command_receipts','UPDATE,DELETE,TRUNCATE,TRIGGER') \
          AND NOT pg_catalog.has_any_column_privilege(current_user,'public.identity_service_clients','INSERT,UPDATE,REFERENCES') \
          AND NOT pg_catalog.has_table_privilege(current_user,'public.identity_service_clients','DELETE,TRUNCATE,TRIGGER') \
          AND NOT pg_catalog.has_any_column_privilege(current_user,'public.identity_deployment_state','INSERT,UPDATE,REFERENCES') \
          AND NOT pg_catalog.has_table_privilege(current_user,'public.identity_deployment_state','DELETE,TRUNCATE,TRIGGER') \
          AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY['memberships','roles','menus','organizations','tenants','user_roles', \
            'applications','tenant_applications','organization_applications','platform_sessions','platform_session_refresh_tokens', \
-           'oauth_clients','oauth_tokens','oauth_authorization_codes','oauth_authorization_requests','oauth_device_codes', \
            'console_browsers','console_login_flows','bff_sessions','customer_portal_contexts', \
-           'context_selections','context_selection_services','context_selection_registrations']::text[]) AS target(name) \
+           'context_selections','context_selection_services','context_selection_registrations', \
+           'platform_app_capabilities','platform_resource_services','platform_resource_bindings','platform_machine_delegations', \
+           'platform_auth_partners','platform_auth_applications','platform_auth_application_operators', \
+           'platform_auth_application_requests','platform_auth_release_bindings','platform_auth_review_operations']::text[]) AS target(name) \
            WHERE pg_catalog.has_any_column_privilege(current_user,'public.'||target.name,'SELECT,INSERT,UPDATE,REFERENCES') \
               OR pg_catalog.has_table_privilege(current_user,'public.'||target.name,'DELETE,TRUNCATE,TRIGGER,REFERENCES'))")
         .fetch_one(&state.pool).await.map_err(|_|AppError::Unavailable)?;
     if let Some(platform) = state.config.context_platform.as_ref() {
-        let reused:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_service_clients WHERE secret_hash=$1) OR EXISTS(SELECT 1 FROM oidc_clients WHERE secret_hash=$1)")
+        let reused:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_service_clients WHERE secret_hash=$1) OR EXISTS(SELECT 1 FROM auth_client_credentials WHERE secret_digest=$1)")
             .bind(platform.secret_digest()).fetch_one(&state.pool).await.map_err(|_|AppError::Unavailable)?;
         if reused {
             return Err(AppError::Unavailable);

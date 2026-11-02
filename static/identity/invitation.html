@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="referrer" content="no-referrer">
+    <title>领取账号邀请 · 账号认证中心</title>
+    <link rel="stylesheet" href="/sso/assets/identity.css">
+    <script src="/sso/assets/invitation.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#invitation-content">跳到邀请领取表单</a>
+    <main class="auth-shell" aria-label="账号邀请领取">
+      <aside class="identity-story" aria-labelledby="story-title">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span>认证中心<span class="brand-en" lang="en">IDENTITY</span></span>
+        </div>
+        <div class="story-copy">
+          <p class="story-kicker">一份邀请 · 一个新起点</p>
+          <h2 id="story-title">从您的专属邀请，<br>开始安全连接。</h2>
+          <p>使用收到的邀请凭证创建账号，<br>然后通过认证中心登录。</p>
+        </div>
+        <div class="connection-art" aria-hidden="true">
+          <span class="orbit orbit-one"></span><span class="orbit orbit-two"></span><span class="orbit orbit-three"></span>
+          <span class="orbit-point point-one"></span><span class="orbit-point point-two"></span><span class="orbit-center"></span>
+        </div>
+        <p class="story-footer"><span class="lock-mark" aria-hidden="true"></span>邀请凭证仅用于本次账号创建</p>
+      </aside>
+      <section class="auth-content" id="invitation-content" tabindex="-1" aria-busy="false">
+        <header class="page-heading">
+          <p class="eyebrow">账号邀请</p>
+          <h1 id="page-title" tabindex="-1">创建您的新账号</h1>
+          <p class="page-description">请从邀请消息中复制邀请凭证和核验编号，再设置新的用户名与密码。</p>
+        </header>
+        <div id="invitation-error" class="notice notice-error" role="alert" aria-atomic="true" tabindex="-1" hidden></div>
+        <form id="invitation-form" class="auth-form" method="post" action="/api/sso/invitations/invalid/accept" autocomplete="off">
+          <div class="form-field">
+            <label for="invitation-token">邀请凭证</label>
+            <input id="invitation-token" name="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" minlength="43" maxlength="43" pattern="[A-Za-z0-9_\-]{43}" required aria-describedby="token-help">
+            <p id="token-help" class="field-caption">粘贴邀请消息中完整的 43 位凭证。</p>
+          </div>
+          <div class="form-field">
+            <label for="verification-ref">核验编号</label>
+            <input id="verification-ref" name="verificationRef" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="36" required aria-describedby="verification-help">
+            <p id="verification-help" class="field-caption">使用与邀请一同收到的 verificationRef。</p>
+          </div>
+          <div class="form-field">
+            <label for="new-username">新用户名</label>
+            <input id="new-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="100" required>
+          </div>
+          <div class="form-field">
+            <label for="new-password">设置密码</label>
+            <input id="new-password" name="password" type="password" autocomplete="new-password" maxlength="1024" required aria-describedby="password-help">
+            <p id="password-help" class="field-caption">请使用符合当前账号密码规则的新密码。</p>
+          </div>
+          <div class="form-field">
+            <label for="operation-id">领取操作编号</label>
+            <input id="operation-id" name="operationId" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="36" required aria-describedby="operation-help">
+            <p id="operation-help" class="field-caption">已为本次领取生成编号，请先保存。若结果未确认，使用原编号和相同内容重试；也可粘贴之前保存的编号。</p>
+          </div>
+          <button id="invitation-submit" class="button button-primary" type="submit" disabled><span>创建账号</span><span aria-hidden="true">→</span></button>
+          <p class="form-help">提交后会清空邀请凭证和密码。账号创建成功后，请继续前往登录。</p>
+        </form>
+        <section id="invitation-complete" class="complete-panel" aria-labelledby="complete-status" tabindex="-1" hidden>
+          <span class="complete-symbol" aria-hidden="true">✓</span>
+          <p id="complete-status" role="status">ACCOUNT_CREATED</p>
+          <a class="button button-primary" href="/sso/login">前往登录</a>
+        </section>
+        <noscript><p class="notice notice-error">请启用 JavaScript 后重新打开此页面，以安全提交邀请凭证。</p></noscript>
+        <footer class="auth-footer"><span class="footer-rule" aria-hidden="true"></span><p>安全创建，由您确认</p></footer>
+      </section>
+    </main>
+    <p class="page-footer">账号认证中心<span aria-hidden="true"> / </span><span lang="en">ACCOUNT · CONNECTION · TRUST</span></p>
+  </body>
+</html>

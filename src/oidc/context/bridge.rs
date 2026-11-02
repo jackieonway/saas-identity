@@ -51,7 +51,7 @@ impl Settings {
                 && url.origin().ascii_serialization() == *origin,
             "CONTEXT_PLATFORM_ORIGIN_INVALID"
         );
-        let id = super::super::clients::canonical_id(
+        let id = super::super::canonical_id(
             values[1].ok_or_else(|| anyhow::anyhow!("CONTEXT_PLATFORM_SERVICE_ID_REQUIRED"))?,
         )
         .map_err(|_| anyhow::anyhow!("CONTEXT_PLATFORM_SERVICE_ID_INVALID"))?;

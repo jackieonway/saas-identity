@@ -36,8 +36,9 @@ pub(crate) async fn write_in_tx(
 ) -> Result<(), AppError> {
     let written=sqlx::query("INSERT INTO identity_audit_logs(id,user_id,username,action,detail,ip,user_agent,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp())")
         .bind(super::uuid7::new_uuid()).bind(info.user_id).bind(info.username).bind(info.action).bind(info.detail).bind(info.ip).bind(info.user_agent)
-        .execute(&mut **tx).await.map_err(|_|AppError::Unavailable)?;
+        .execute(&mut **tx).await.map_err(|_|{crate::observability::audit_failure();AppError::Unavailable})?;
     if written.rows_affected() != 1 {
+        crate::observability::audit_failure();
         return Err(AppError::Unavailable);
     }
     Ok(())

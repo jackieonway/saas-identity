@@ -16,7 +16,48 @@ use serde_json::{json, Value};
 
 use crate::{error::AppError, extractors::ApiJson, internal::ServicePrincipal, state::AppState};
 
-use super::{clients, Result};
+use super::Result;
+use crate::util::audit;
+use sqlx::{Postgres, Transaction};
+
+async fn require_admin(
+    state: &AppState,
+    user: &ServicePrincipal,
+) -> std::result::Result<(), AppError> {
+    super::authority(state).await?;
+    user.require("KEY_ADMIN")
+}
+async fn admin_audit(
+    tx: &mut Transaction<'_, Postgres>,
+    user: &ServicePrincipal,
+    headers: &HeaderMap,
+    action: &str,
+    detail: &str,
+) -> std::result::Result<(), AppError> {
+    audit::write_in_tx(
+        tx,
+        audit::AuditInfo {
+            user_id: None,
+            username: &user.id.to_string(),
+            action,
+            detail,
+            ip: &audit::client_ip(headers),
+            user_agent: &audit::ua_of(headers),
+        },
+    )
+    .await
+}
+
+#[cfg(test)]
+mod actor_fixture;
+#[cfg(test)]
+mod config_tests;
+#[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
+mod pg_fixture;
+#[cfg(test)]
+mod test_keys;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -123,7 +164,7 @@ fn configured(state: &AppState) -> std::result::Result<&Arc<KeySet>, AppError> {
 pub(super) async fn jwks(State(state): State<AppState>) -> Result<Json<Value>> {
     super::authority(&state).await?;
     let rows:Vec<(String,String,String)>=sqlx::query_as(
-        "SELECT kid,n,e FROM oidc_signing_keys WHERE retired_at IS NULL AND revoked_at IS NULL ORDER BY kid")
+        "SELECT kid,n,e FROM auth_signing_keys WHERE retired_at IS NULL AND revoked_at IS NULL ORDER BY kid")
         .fetch_all(&state.pool).await.map_err(|_|AppError::Unavailable)?;
     Ok(Json(
         json!({"keys":rows.into_iter().map(|(kid,n,e)|json!({"kty":"RSA","use":"sig","alg":"RS256","kid":kid,"n":n,"e":e})).collect::<Vec<_>>()}),
@@ -144,13 +185,13 @@ pub(super) async fn publish(
 ) -> std::result::Result<Json<Value>, AppError> {
     let body: KeyCommand = serde_json::from_value(raw_body.clone())
         .map_err(|_| AppError::bad_request("OIDC密钥请求无效"))?;
-    clients::require_admin(&state, &user).await?;
+    require_admin(&state, &user).await?;
     let mut command = crate::admin_operations::begin(
         &state,
         &user,
         &headers,
         "POST",
-        "/internal/identity/oidc/keys/publish",
+        "/internal/identity/auth/keys/publish",
         &raw_body,
     )
     .await?;
@@ -163,7 +204,7 @@ pub(super) async fn publish(
         .ok_or_else(|| AppError::bad_request("kid 未在已验证的密钥配置中登记"))?;
     key_lock(&mut command.tx).await?;
     let existing: Option<(String, String)> =
-        sqlx::query_as("SELECT n,e FROM oidc_signing_keys WHERE kid=$1 FOR UPDATE")
+        sqlx::query_as("SELECT n,e FROM auth_signing_keys WHERE kid=$1 FOR UPDATE")
             .bind(&body.kid)
             .fetch_optional(&mut *command.tx)
             .await
@@ -175,7 +216,7 @@ pub(super) async fn publish(
         return Err(AppError::conflict("kid 已登记，请继续其现有生命周期"));
     }
     let inserted = sqlx::query(
-        "INSERT INTO oidc_signing_keys(kid,n,e,published_at) VALUES($1,$2,$3,clock_timestamp())",
+        "INSERT INTO auth_signing_keys(kid,n,e,published_at) VALUES($1,$2,$3,clock_timestamp())",
     )
     .bind(&material.kid)
     .bind(&material.n)
@@ -185,7 +226,7 @@ pub(super) async fn publish(
     if inserted.rows_affected() != 1 {
         return Err(AppError::Unavailable);
     }
-    clients::admin_audit(
+    admin_audit(
         &mut command.tx,
         &user,
         &headers,
@@ -208,13 +249,13 @@ pub(super) async fn activate(
 ) -> std::result::Result<Json<Value>, AppError> {
     let body: KeyCommand = serde_json::from_value(raw_body.clone())
         .map_err(|_| AppError::bad_request("OIDC密钥请求无效"))?;
-    clients::require_admin(&state, &user).await?;
+    require_admin(&state, &user).await?;
     let mut command = crate::admin_operations::begin(
         &state,
         &user,
         &headers,
         "POST",
-        "/internal/identity/oidc/keys/activate",
+        "/internal/identity/auth/keys/activate",
         &raw_body,
     )
     .await?;
@@ -227,18 +268,18 @@ pub(super) async fn activate(
         .ok_or_else(|| AppError::bad_request("kid 未在已验证的密钥配置中登记"))?;
     key_lock(&mut command.tx).await?;
     let current:Option<(String,String)>=sqlx::query_as(
-        "SELECT n,e FROM oidc_signing_keys WHERE kid=$1 AND retired_at IS NULL AND revoked_at IS NULL FOR UPDATE")
+        "SELECT n,e FROM auth_signing_keys WHERE kid=$1 AND retired_at IS NULL AND revoked_at IS NULL FOR UPDATE")
         .bind(&body.kid).fetch_optional(&mut *command.tx).await.map_err(|_|AppError::Unavailable)?;
     if current.as_ref() != Some(&(material.n.clone(), material.e.clone())) {
         return Err(AppError::conflict(
             "必须先发布相同公钥，且不能重新启用已退役或撤销的 kid",
         ));
     }
-    sqlx::query("UPDATE oidc_signing_keys SET active=false WHERE active")
+    sqlx::query("UPDATE auth_signing_keys SET active=false WHERE active")
         .execute(&mut *command.tx)
         .await?;
     let selected = sqlx::query(
-        "UPDATE oidc_signing_keys SET active=true,activated_at=clock_timestamp() WHERE kid=$1",
+        "UPDATE auth_signing_keys SET active=true,activated_at=clock_timestamp() WHERE kid=$1",
     )
     .bind(&body.kid)
     .execute(&mut *command.tx)
@@ -248,12 +289,12 @@ pub(super) async fn activate(
     }
     // Clearing a previous active set may legitimately affect zero rows. The
     // selected key must nevertheless be the only active, usable key afterward.
-    let unique_active:bool=sqlx::query_scalar("SELECT count(*)=1 AND COALESCE(bool_and(kid=$1 AND retired_at IS NULL AND revoked_at IS NULL),false) FROM oidc_signing_keys WHERE active")
+    let unique_active:bool=sqlx::query_scalar("SELECT count(*)=1 AND COALESCE(bool_and(kid=$1 AND retired_at IS NULL AND revoked_at IS NULL),false) FROM auth_signing_keys WHERE active")
         .bind(&body.kid).fetch_one(&mut *command.tx).await?;
     if !unique_active {
         return Err(AppError::Unavailable);
     }
-    clients::admin_audit(
+    admin_audit(
         &mut command.tx,
         &user,
         &headers,
@@ -316,14 +357,14 @@ async fn finish(
     emergency: bool,
 ) -> std::result::Result<Json<Value>, AppError> {
     super::enabled(state)?;
-    clients::require_admin(state, user).await?;
+    require_admin(state, user).await?;
     if !valid_kid(kid) {
         return Err(AppError::bad_request("kid 无效"));
     }
     let (method, path) = if emergency {
-        ("POST", format!("/internal/identity/oidc/keys/{kid}/revoke"))
+        ("POST", format!("/internal/identity/auth/keys/{kid}/revoke"))
     } else {
-        ("DELETE", format!("/internal/identity/oidc/keys/{kid}"))
+        ("DELETE", format!("/internal/identity/auth/keys/{kid}"))
     };
     let mut command =
         crate::admin_operations::begin(state, user, headers, method, &path, &Value::Null).await?;
@@ -333,7 +374,7 @@ async fn finish(
     key_lock(&mut command.tx).await?;
     let row:Option<(bool,bool)>=sqlx::query_as(
         "SELECT active,(last_signed_exp IS NULL OR last_signed_exp+interval '60 seconds'<clock_timestamp()) \
-         FROM oidc_signing_keys WHERE kid=$1 AND retired_at IS NULL AND revoked_at IS NULL FOR UPDATE")
+         FROM auth_signing_keys WHERE kid=$1 AND retired_at IS NULL AND revoked_at IS NULL FOR UPDATE")
         .bind(kid).fetch_optional(&mut *command.tx).await.map_err(|_|AppError::Unavailable)?;
     let Some((active, safe)) = row else {
         return Err(AppError::not_found("kid 不存在或已结束生命周期"));
@@ -344,15 +385,15 @@ async fn finish(
         ));
     }
     let sql = if emergency {
-        "UPDATE oidc_signing_keys SET active=false,revoked_at=clock_timestamp() WHERE kid=$1"
+        "UPDATE auth_signing_keys SET active=false,revoked_at=clock_timestamp() WHERE kid=$1"
     } else {
-        "UPDATE oidc_signing_keys SET retired_at=clock_timestamp() WHERE kid=$1"
+        "UPDATE auth_signing_keys SET retired_at=clock_timestamp() WHERE kid=$1"
     };
     let updated = sqlx::query(sql).bind(kid).execute(&mut *command.tx).await?;
     if updated.rows_affected() != 1 {
         return Err(AppError::Unavailable);
     }
-    clients::admin_audit(
+    admin_audit(
         &mut command.tx,
         user,
         headers,
@@ -379,9 +420,19 @@ pub(super) async fn sign(
     claims: Value,
     expires: DateTime<Utc>,
 ) -> Result<String> {
+    sign_typed(state, tx, claims, expires, "JWT").await
+}
+
+pub(super) async fn sign_typed(
+    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    claims: Value,
+    expires: DateTime<Utc>,
+    token_type: &'static str,
+) -> Result<String> {
     let configured = configured(state)?;
     let row:Option<(String,String,String)>=sqlx::query_as(
-        "SELECT kid,n,e FROM oidc_signing_keys WHERE active AND revoked_at IS NULL AND retired_at IS NULL FOR UPDATE")
+        "SELECT kid,n,e FROM auth_signing_keys WHERE active AND revoked_at IS NULL AND retired_at IS NULL FOR UPDATE")
         .fetch_optional(&mut **tx).await.map_err(|_|AppError::Unavailable)?;
     let (kid, n, e) = row.ok_or(AppError::Unavailable)?;
     let material = configured
@@ -393,12 +444,13 @@ pub(super) async fn sign(
     let token = tokio::task::spawn_blocking(move || {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(signing_kid);
+        header.typ = Some(token_type.to_owned());
         jsonwebtoken::encode(&header, &claims, &encoding)
     })
     .await
     .map_err(|_| AppError::Unavailable)?
     .map_err(|_| AppError::Unavailable)?;
-    let recorded=sqlx::query("UPDATE oidc_signing_keys SET last_signed_exp=GREATEST(COALESCE(last_signed_exp,$2),$2) WHERE kid=$1")
+    let recorded=sqlx::query("UPDATE auth_signing_keys SET last_signed_exp=GREATEST(COALESCE(last_signed_exp,$2),$2) WHERE kid=$1")
         .bind(kid).bind(expires).execute(&mut **tx).await?;
     if recorded.rows_affected() != 1 {
         return Err(AppError::Unavailable.into());

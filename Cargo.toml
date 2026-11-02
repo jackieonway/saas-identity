@@ -28,6 +28,9 @@ anyhow = "1"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+sqlx = { version = "0.8", default-features = false, features = ["migrate"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 
 [profile.dev]
 debug = 1

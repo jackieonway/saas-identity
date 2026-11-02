@@ -5,8 +5,9 @@
   // interaction proofs live in memory; no OAuth parameters are reconstructed.
   const uuid7 = "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
   const flowPattern = new RegExp(`^${uuid7}$`);
-  const restartPattern = new RegExp(`^/sso/login\\?flow=${uuid7}$`);
+  const restartPattern = new RegExp(`^/oauth/login\\?flow=${uuid7}$`);
   const csrfPattern = /^[0-9a-f]{64}$/;
+  const interactionBase = "/oauth";
   const purposes = Object.freeze({
     PLATFORM_CONSOLE: "员工控制台",
     CUSTOMER_PORTAL: "客户门户",
@@ -34,6 +35,9 @@
     usernameError: byId("username-error"),
     password: byId("password"),
     passwordError: byId("password-error"),
+    mfaField: byId("mfa-field"),
+    mfaCode: byId("mfa-code"),
+    mfaError: byId("mfa-error"),
     toggle: byId("toggle-password"),
     loginSubmit: byId("login-submit"),
     consent: byId("consent-panel"),
@@ -140,7 +144,7 @@
     ui.content.setAttribute("aria-busy", String(value));
     ui.login.setAttribute("aria-busy", String(value && action === "login"));
     ui.consentForm.setAttribute("aria-busy", String(value && action !== "login"));
-    for (const element of [ui.username, ui.password, ui.toggle, ui.loginSubmit,
+    for (const element of [ui.username, ui.password, ui.mfaCode, ui.toggle, ui.loginSubmit,
       ui.allow, ui.deny, ui.changeAccount, ui.restartButton, ui.retry, ui.tenant, ui.search, ui.back]) {
       element.disabled = value;
     }
@@ -164,6 +168,7 @@
 
   function clearPassword() {
     ui.password.value = "";
+    ui.mfaCode.value = "";
     ui.password.type = "password";
     ui.toggle.textContent = "显示";
     ui.toggle.setAttribute("aria-label", "显示密码");
@@ -215,6 +220,7 @@
     if (!value || typeof value !== "object" || !["LOGIN_REQUIRED", "CONSENT_REQUIRED", "CONTEXT_SELECTION_REQUIRED", "RESTART_REQUIRED"].includes(value.status)
       || !value.client || !nonemptyText(value.client.name, 256)
       || !Object.hasOwn(purposes, value.client.purpose)
+      || (value.client.purposeDescription !== undefined && (typeof value.client.purposeDescription !== "string" || value.client.purposeDescription.length > 2000))
       || !Array.isArray(value.scopes) || value.scopes.length < 1 || value.scopes.length > 3
       || !value.scopes.includes("openid") || new Set(value.scopes).size !== value.scopes.length
       || !value.scopes.every((scope) => typeof scope === "string" && Object.hasOwn(scopeCopy, scope))
@@ -377,7 +383,7 @@
     ui.permissions.hidden = value.status === "CONTEXT_SELECTION_REQUIRED";
     showSteps(value.status === "LOGIN_REQUIRED" ? 0 : 1);
     ui.clientName.textContent = value.client.name;
-    ui.clientPurpose.textContent = purposes[value.client.purpose];
+    ui.clientPurpose.textContent = value.client.purposeDescription || purposes[value.client.purpose];
     ui.clientPurpose.hidden = false;
     ui.client.hidden = false;
     if (value.status === "LOGIN_REQUIRED") {
@@ -421,7 +427,11 @@
   }
 
   async function loadInteraction(focus = false) {
-    const value = await request(`/oidc/interaction/${flow}`);
+    const value = await request(`${interactionBase}/interaction/${flow}`);
+    if (value?.status === "AUTO_REDIRECT" && typeof value.redirectTo === "string") {
+      navigate(value.redirectTo, "approve");
+      return;
+    }
     renderInteraction(validateInteraction(value), focus);
   }
 
@@ -448,7 +458,7 @@
   }
 
   function resetFieldErrors() {
-    for (const [input, error] of [[ui.username, ui.usernameError], [ui.password, ui.passwordError]]) {
+    for (const [input, error] of [[ui.username, ui.usernameError], [ui.password, ui.passwordError], [ui.mfaCode, ui.mfaError]]) {
       input.removeAttribute("aria-invalid");
       error.textContent = "";
       error.hidden = true;
@@ -461,6 +471,7 @@
     for (const [input, error, message] of [
       [ui.username, ui.usernameError, "请输入您的账号。"],
       [ui.password, ui.passwordError, "请输入密码。"],
+      ...(ui.mfaField.hidden ? [] : [[ui.mfaCode, ui.mfaError, "请输入身份验证器验证码或恢复码。"]]),
     ]) {
       if (input === ui.username ? !input.value.trim() : !input.value) {
         input.setAttribute("aria-invalid", "true");
@@ -491,7 +502,8 @@
       await request("/api/sso/login", {
         method: "POST",
         csrf: preauth.csrfToken,
-        body: { username: ui.username.value.trim(), password: ui.password.value },
+        body: { username: ui.username.value.trim(), password: ui.password.value,
+          ...(ui.mfaField.hidden ? {} : { mfaCode: ui.mfaCode.value.trim() }) },
       });
       authenticated = true;
       clearPassword();
@@ -501,6 +513,13 @@
     } catch (error) {
       if (error instanceof InactivePage) return;
       ui.notice.hidden = true;
+      if (!authenticated && error.status === 428) {
+        ui.mfaField.hidden = false;
+        ui.mfaCode.setAttribute("required", "");
+        showError("请输入身份验证器中的 6 位验证码，或使用一次性恢复码。", { focus: false });
+        ui.mfaCode.focus();
+        return;
+      }
       clearPassword();
       if (authenticated) {
         interaction = null;
@@ -553,7 +572,7 @@
     setBusy(true, action);
     announce(action === "restart" ? "正在准备新的登录页面。" : "正在处理您的选择，请稍候。");
     try {
-      const result = await request(`/oidc/interaction/${flow}`, {
+      const result = await request(`${interactionBase}/interaction/${flow}`, {
         method: "POST", csrf: interaction.csrfToken, body,
       });
       if (action === "consent") {
@@ -613,7 +632,7 @@
     ui.toggle.setAttribute("aria-label", reveal ? "隐藏密码" : "显示密码");
     ui.toggle.setAttribute("aria-pressed", String(reveal));
   });
-  for (const [input, error] of [[ui.username, ui.usernameError], [ui.password, ui.passwordError]]) {
+  for (const [input, error] of [[ui.username, ui.usernameError], [ui.password, ui.passwordError], [ui.mfaCode, ui.mfaError]]) {
     input.addEventListener("input", () => {
       input.removeAttribute("aria-invalid");
       error.hidden = true;

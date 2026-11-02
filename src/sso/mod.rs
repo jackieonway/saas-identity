@@ -1,5 +1,7 @@
 //! Account-only SSO authentication. Cookies never establish platform authority.
 
+pub(crate) mod mfa;
+pub(crate) mod mfa_recovery;
 mod routes;
 mod store;
 
@@ -16,7 +18,6 @@ pub(crate) struct AccountSessionProof {
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub username: String,
     pub real_name: String,
-    pub avatar: String,
 }
 
 pub(crate) fn opaque_secret() -> Result<String, AppError> {
@@ -48,7 +49,6 @@ pub(crate) async fn browser_proof(
             expires_at: session.expires_at,
             username: session.username,
             real_name: session.real_name,
-            avatar: session.avatar,
         })),
         Err(AppError::Unauthorized(_)) => Ok(None),
         Err(error) => Err(error),

@@ -558,8 +558,10 @@ async fn command(
     match &payload {
         Payload::Create(account) => {
             let prepared = prepared.as_ref().ok_or(AppError::Unavailable)?;
+            // Zero denotes the absence precondition of CREATE. Persisted
+            // accounts start at one, matching canonical OAuth source proofs.
             let written = sqlx::query(
-                "INSERT INTO public.users(id,username,password_hash,real_name,email,phone,gender) VALUES($1,$2,$3,$4,$5,$6,$7)",
+                "INSERT INTO public.users(id,username,password_hash,real_name,email,phone,gender,session_version) VALUES($1,$2,$3,$4,$5,$6,$7,1)",
             )
             .bind(target).bind(&account.username).bind(prepared.encoded()).bind(&account.real_name)
             .bind(&account.email).bind(&account.phone).bind(&account.gender)
@@ -615,6 +617,15 @@ async fn command(
             if written != 1 {
                 return Err(AppError::Unavailable);
             }
+            // Retired pairwise subjects are permanent tombstones. Keeping the
+            // link prevents a later account from inheriting an old public sub.
+            sqlx::query(
+                "UPDATE public.auth_subject_links SET retired_at=clock_timestamp() \
+                 WHERE user_id=$1 AND retired_at IS NULL",
+            )
+            .bind(target)
+            .execute(&mut *tx)
+            .await?;
         }
         Payload::Empty => {
             let written = sqlx::query("UPDATE public.users SET session_version=session_version+1,updated_at=clock_timestamp() WHERE id=$1")
@@ -628,20 +639,24 @@ async fn command(
         .bind(target)
         .fetch_one(&mut *tx)
         .await?;
-    let (revoked_sessions, revoked_tokens) = if reads_revocation_fact(body.kind, before, after) {
-        sqlx::query_as::<_, (i64, i64)>(
-                "SELECT platform_session_count,oauth_token_count FROM public.identity_account_revocation_facts \
-                 WHERE user_id=$1 AND account_version=$2",
-            )
-            .bind(target)
-            .bind(after)
-            .fetch_optional(&mut *tx)
-            .await?
-            .filter(|(sessions, tokens)| *sessions >= 0 && *tokens >= 0)
-            .ok_or(AppError::Unavailable)?
+    let revoked_sessions = if reads_revocation_fact(body.kind, before, after) {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT platform_session_count FROM public.identity_account_revocation_facts \
+             WHERE user_id=$1 AND account_version=$2",
+        )
+        .bind(target)
+        .bind(after)
+        .fetch_optional(&mut *tx)
+        .await?
+        .filter(|sessions| *sessions >= 0)
+        .ok_or(AppError::Unavailable)?
     } else {
-        (0, 0)
+        0
     };
+    // The account command receipt retains its stable counter field. Canonical
+    // authorization is invalidated by the account generation; no platform OAuth
+    // token store exists and this counter does not claim a canonical grant count.
+    let revoked_tokens = 0;
     // Receipt creation follows all dependency work. Expiry cannot be silently
     // extended by an account lock, audit wait or an expensive password worker.
     ensure_deadline(&mut tx, expires).await?;
