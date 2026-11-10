@@ -13,7 +13,7 @@ use std::{sync::Arc, time::Duration as WallDuration};
 use tower::ServiceExt;
 
 const REDIRECT: &str = "https://rp.example.test/callback";
-const VERIFIER: &str = "phase22-verifier-with-independent-nodes-012345678901234567890";
+pub(super) const VERIFIER: &str = "phase22-verifier-with-independent-nodes-012345678901234567890";
 
 struct Reply {
     status: StatusCode,
@@ -100,7 +100,7 @@ async fn independent_states(keys: &KeyFixture, pool: &PgPool) -> TestResult<(App
     Ok((first, second))
 }
 
-async fn browser_cookie(pool: &PgPool, session: Uuid) -> TestResult<String> {
+pub(super) async fn browser_cookie(pool: &PgPool, session: Uuid) -> TestResult<String> {
     let token = crate::util::hash::sha256_hex(&format!("phase22-browser-{session}"));
     let csrf = crate::util::hash::sha256_hex(&format!("sso-session-csrf-v1:{token}"));
     sqlx::query("UPDATE public.sso_sessions SET token_hash=$2,csrf_hash=$3 WHERE id=$1")
@@ -112,7 +112,7 @@ async fn browser_cookie(pool: &PgPool, session: Uuid) -> TestResult<String> {
     Ok(format!("__Host-saas_sso={token}"))
 }
 
-async fn authorized_code(
+pub(super) async fn authorized_code(
     state: &AppState,
     client: &RegisteredClient,
     cookie: &str,

@@ -30,6 +30,8 @@ canonical `/oauth/token` 支持 USER 的 `authorization_code`、`refresh_token` 
 
 配置只读取显式进程环境。按实际部署提供 `DATABASE_URL`、`BIND_ADDR`（默认 3041）、`APP_ENV`、`SSO_ENABLED=true`、`OIDC_ENABLED=true`、准确 HTTPS `SSO_ORIGIN`/`OIDC_ISSUER`、绝对 `OIDC_KEYSET_PATH` 和独立服务凭据。启用生产 SSO 还必须提供独立的 `SSO_TOTP_ENCRYPTION_KEY`（64 个十六进制字符、32 个随机字节）；不得复用签名密钥、RP secret、内部服务 secret 或客户资源凭据。
 
+客户端管理支持默认关闭的自有客户端自动授权，以及继承全局或自定义的令牌期限。全局配置 `OIDC_ACCESS_TOKEN_TTL_SECONDS`、`OIDC_REFRESH_TOKEN_IDLE_TTL_SECONDS`、`OIDC_OFFLINE_REFRESH_TOKEN_IDLE_TTL_SECONDS`、`OIDC_CLIENT_TOKEN_TTL_SECONDS` 默认分别为 300、1800、86400、300 秒。自动授权不跳过登录、员工选择、显式确认或已撤销同意；刷新仍强制轮换，期限始终受原来源和凭据约束。字段、有限范围和行为见[客户端授权与令牌配置](../saas-plateform/backend/docs/oauth-issuance.md#授权和令牌设置)。
+
 合作方审核另用 `AUTH_REVIEW` 私有服务；平台审核事实和当前版本由窄 intent fence 复验，身份权威仅接受与该事实完全匹配的最小 manifest。生产责任/运营政策未由部署责任人绑定时保持关闭。
 
 受控账号邀请使用 `AUTH_INVITATION`，管理 API 只返回元数据；24 小时邀请的收件人及用途不可更改。签发要求独立 `AUTH_INVITATION_KEYSET_PATH`，以及 owner 登记的唯一有效 `ACCOUNT_ONBOARDING` 接收渠道，并在同一事务写入投递任务。签发后，可信 owner 另外登记精确绑定邀请、接收人、用途、渠道和代际的核验事实。worker 只有在当前任务租约及核验事实均有效时，才在内存中恢复 token 并发送到预先核验的 HTTPS 目标；旧 `delivery-material` 与 claim-only `consume` HTTP 路由已经关闭。

@@ -48,6 +48,10 @@ pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
          AND NOT pg_catalog.has_column_privilege(current_user,'public.users','is_super_admin','SELECT,INSERT,UPDATE') \
          AND NOT pg_catalog.has_column_privilege(current_user,'public.users','id','UPDATE') \
          AND NOT pg_catalog.has_table_privilege(current_user,'public.users','DELETE,TRUNCATE,TRIGGER') \
+         AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','auto_authorize','SELECT') \
+         AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','access_token_ttl_seconds','SELECT') \
+         AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','refresh_token_ttl_seconds','SELECT') \
+         AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','client_token_ttl_seconds','SELECT') \
          AND pg_catalog.has_table_privilege(current_user,'public.sso_sessions','SELECT') \
          AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY[
            'auth_applications','auth_application_admissions','auth_resources','auth_scopes','auth_clients','auth_client_credentials',

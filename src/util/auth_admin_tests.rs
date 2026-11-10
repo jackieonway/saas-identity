@@ -112,12 +112,20 @@ async fn phase04_unified_client_api_enforces_policy_paging_and_credential_lifecy
         });
 
         let client_operation = Uuid::now_v7();
+        let mut configured=user_input(Value::Null, "ENABLED");
+        configured["autoAuthorize"]=json!(true);
+        configured["accessTokenTtlSeconds"]=json!(60);
+        configured["refreshTokenTtlSeconds"]=json!(300);
         let create = db.auth_admin_call(
             client_operation,
             "POST",
             "/internal/identity/auth/clients",
-            Some(user_input(Value::Null, "ENABLED")),
+            Some(configured),
         ).await?;
+        ensure!(create.body["autoAuthorize"]==true && create.body["accessTokenTtlSeconds"]==60
+            && create.body["refreshTokenTtlSeconds"]==300 && create.body["refreshTokenStrategy"]=="ROTATE"
+            && create.body["tokenDefaults"]["accessTokenTtlSeconds"]==300,
+            "client policy did not persist or report inherited defaults");
         ensure!(create.status == StatusCode::OK
             && create.body["id"] == client_operation.to_string()
             && create.body["clientType"] == "CONFIDENTIAL"

@@ -28,6 +28,7 @@ const MAX_OFFSET: i64 = 100_000;
 
 const CLIENT_SELECT: &str = "SELECT c.id,c.client_id,c.display_name,c.application_id, \
     a.display_name AS application_name,a.ownership,a.partner_id,c.environment, \
+    c.auto_authorize,c.access_token_ttl_seconds,c.refresh_token_ttl_seconds,c.client_token_ttl_seconds, \
     c.client_type,c.runtime_kind,c.subject_mode,c.context_mode,c.allowed_member_types,c.grant_types, \
     c.token_endpoint_auth_method,c.redirect_uris,c.post_logout_redirect_uris,c.logout_mode,c.backchannel_logout_uri,c.backchannel_target_id,c.status,c.version, \
     c.policy_version,c.created_at,c.updated_at,g.group_id AS consent_group_id, \
@@ -83,11 +84,15 @@ struct ClientRow {
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
     consent_group_id: Option<Uuid>,
+    auto_authorize: bool,
+    access_token_ttl_seconds: Option<i64>,
+    refresh_token_ttl_seconds: Option<i64>,
+    client_token_ttl_seconds: Option<i64>,
     permissions: Value,
 }
 
 impl ClientRow {
-    fn json(&self) -> Value {
+    fn json(&self, defaults: &crate::client_policy::TokenDefaults) -> Value {
         json!({
             "id":self.id,
             "clientId":self.client_id,
@@ -116,6 +121,12 @@ impl ClientRow {
             "updatedAt":self.updated_at,
             "consentGroupId":self.consent_group_id,
             "permissions":self.permissions,
+            "autoAuthorize":self.auto_authorize,
+            "accessTokenTtlSeconds":self.access_token_ttl_seconds,
+            "refreshTokenTtlSeconds":self.refresh_token_ttl_seconds,
+            "clientTokenTtlSeconds":self.client_token_ttl_seconds,
+            "refreshTokenStrategy":"ROTATE",
+            "tokenDefaults":defaults,
         })
     }
 }
@@ -130,6 +141,12 @@ struct PermissionInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ClientInput {
+    #[serde(default)]
+    auto_authorize: bool,
+    access_token_ttl_seconds: Option<i64>,
+    refresh_token_ttl_seconds: Option<i64>,
+    client_token_ttl_seconds: Option<i64>,
+
     expected_version: Option<i64>,
     application_id: String,
     environment: String,
@@ -332,7 +349,7 @@ async fn list(
         .fetch_all(&state.pool)
         .await?;
     Ok(Json(json!({
-        "records":rows.iter().map(ClientRow::json).collect::<Vec<_>>(),
+        "records":rows.iter().map(|row| row.json(&state.config.token_defaults)).collect::<Vec<_>>(),
         "page":{"limit":limit,"offset":offset,"total":total}
     })))
 }
@@ -349,7 +366,7 @@ async fn get_client(
         .bind(id)
         .fetch_optional(&state.pool)
         .await?;
-    row.map(|client| Json(client.json()))
+    row.map(|client| Json(client.json(&state.config.token_defaults)))
         .ok_or_else(|| AppError::not_found("统一客户端不存在"))
 }
 
@@ -385,6 +402,23 @@ fn validate_uris(values: &mut [String], allow_empty: bool) -> Result<(), AppErro
 }
 
 fn validate_input(input: &mut ClientInput, create: bool) -> Result<Uuid, AppError> {
+    if !crate::client_policy::valid_optional_ttl(input.access_token_ttl_seconds, false)
+        || !crate::client_policy::valid_optional_ttl(input.refresh_token_ttl_seconds, true)
+        || !crate::client_policy::valid_optional_ttl(input.client_token_ttl_seconds, false)
+        || (input.subject_mode == "MACHINE"
+            && (input.auto_authorize
+                || input.access_token_ttl_seconds.is_some()
+                || input.refresh_token_ttl_seconds.is_some()))
+        || (input.subject_mode == "USER" && input.client_token_ttl_seconds.is_some())
+        || (input.refresh_token_ttl_seconds.is_some()
+            && !input
+                .grant_types
+                .iter()
+                .any(|grant| grant == "refresh_token"))
+    {
+        return Err(AppError::bad_request("客户端授权策略或令牌有效期无效"));
+    }
+
     let application_id = parse_id(&input.application_id)?;
     input.environment = input.environment.to_ascii_lowercase();
     input.display_name = input.display_name.trim().to_owned();
@@ -558,6 +592,9 @@ async fn check_reviewed_admission(
     application_id: Uuid,
     application: &ApplicationPolicy,
 ) -> Result<(), AppError> {
+    if input.auto_authorize && application.ownership != "FIRST_PARTY" {
+        return Err(AppError::forbidden("自动授权仅适用于自有登录客户端"));
+    }
     if application.ownership != "THIRD_PARTY" {
         return Ok(());
     }
@@ -1028,6 +1065,49 @@ async fn add_consent_group_client(
 #[path = "auth_admin_logout_tests.rs"]
 mod logout_registration_tests;
 
+#[cfg(test)]
+#[path = "auth_admin_default_group_tests.rs"]
+mod default_group_tests;
+
+async fn private_consent_group(
+    tx: &mut Transaction<'_, Postgres>,
+    input: &ClientInput,
+    application: Uuid,
+    purpose: &str,
+    existing: Option<Uuid>,
+) -> Result<Option<Uuid>, AppError> {
+    if existing.is_some() || input.subject_mode != "USER" {
+        return Ok(existing);
+    }
+    // Each new login client owns an isolated consent record. Group management
+    // is not a prerequisite for registering a functioning login client.
+    let group = crate::util::uuid7::new_uuid();
+    sqlx::query(
+        "INSERT INTO public.auth_consent_groups(id,application_id,environment,display_name,purpose,subject_mode,context_mode,status) \
+         VALUES($1,$2,$3,$4,$5,'USER',$6,'ACTIVE')",
+    )
+    .bind(group)
+    .bind(application)
+    .bind(&input.environment)
+    .bind(&input.display_name)
+    .bind(purpose)
+    .bind(&input.context_mode)
+    .execute(&mut **tx)
+    .await?;
+    Ok(Some(group))
+}
+
+async fn write_client_policy(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+    input: &ClientInput,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE public.auth_clients SET auto_authorize=$2,access_token_ttl_seconds=$3,refresh_token_ttl_seconds=$4,client_token_ttl_seconds=$5 WHERE id=$1")
+        .bind(id).bind(input.auto_authorize).bind(input.access_token_ttl_seconds)
+        .bind(input.refresh_token_ttl_seconds).bind(input.client_token_ttl_seconds).execute(&mut **tx).await?;
+    Ok(())
+}
+
 async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1047,6 +1127,14 @@ async fn create(
     check_reviewed_admission(&mut operation.tx, &input, application_id, &policy).await?;
     let permission_ids = check_scopes(&mut operation.tx, &input, &policy).await?;
     let group_id = check_consent_group(&mut operation.tx, &input, application_id, &policy).await?;
+    let group_id = private_consent_group(
+        &mut operation.tx,
+        &input,
+        application_id,
+        &policy.purpose,
+        group_id,
+    )
+    .await?;
     let id = operation.operation_id;
     let client_id = id.to_string();
     sqlx::query(
@@ -1072,6 +1160,7 @@ async fn create(
     .bind(&input.status)
     .execute(&mut *operation.tx)
     .await?;
+    write_client_policy(&mut operation.tx, id, &input).await?;
     insert_permissions(&mut operation.tx, id, &permission_ids).await?;
     attach_group(
         &mut operation.tx,
@@ -1099,7 +1188,11 @@ async fn create(
         .bind(id)
         .fetch_one(&mut *operation.tx)
         .await?;
-    Ok(Json(operation.commit(row.json()).await?))
+    Ok(Json(
+        operation
+            .commit(row.json(&state.config.token_defaults))
+            .await?,
+    ))
 }
 
 async fn load_locked(
@@ -1142,6 +1235,19 @@ async fn is_stop_only(
                 .as_deref()
                 .map(parse_id)
                 .transpose()?
+    {
+        return Ok(false);
+    }
+    let policy: (bool, Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT auto_authorize,access_token_ttl_seconds,refresh_token_ttl_seconds,client_token_ttl_seconds FROM auth_clients WHERE id=$1")
+        .bind(id).fetch_one(&mut **tx).await?;
+    if policy
+        != (
+            input.auto_authorize,
+            input.access_token_ttl_seconds,
+            input.refresh_token_ttl_seconds,
+            input.client_token_ttl_seconds,
+        )
     {
         return Ok(false);
     }
@@ -1218,6 +1324,10 @@ async fn update(
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
+    // Group binding is an internal client attribute after group administration
+    // retirement. An omitted value on edit retains the existing association.
+    let group_id = group_id.or(original_group);
+    input.consent_group_id = group_id.map(|group| group.to_string());
     if original_group != group_id {
         return Err(AppError::conflict("客户端同意组不可原地变更"));
     }
@@ -1261,6 +1371,7 @@ async fn update(
     .bind(input.backchannel_target_id.as_deref().map(parse_id).transpose()?)
     .execute(&mut *tx)
     .await?;
+    write_client_policy(&mut tx, id, &input).await?;
     let recheck_target = permission_ids.is_some();
     if let Some(permission_ids) = permission_ids {
         sqlx::query("DELETE FROM public.auth_client_permissions WHERE client_id=$1")
@@ -1287,7 +1398,11 @@ async fn update(
     let sql = format!("{CLIENT_SELECT} WHERE c.id=$1");
     let row: ClientRow = sqlx::query_as(&sql).bind(id).fetch_one(&mut *tx).await?;
     operation.tx = tx;
-    Ok(Json(operation.commit(row.json()).await?))
+    Ok(Json(
+        operation
+            .commit(row.json(&state.config.token_defaults))
+            .await?,
+    ))
 }
 
 async fn rotate_credential(

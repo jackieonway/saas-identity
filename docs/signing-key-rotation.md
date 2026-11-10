@@ -1,4 +1,6 @@
-# 签名密钥轮换操作手册
+# 历史签名密钥管理流程
+
+> 平台现仅保留客户端管理，本文中的平台密钥管理入口及权限已移除。以下内容仅供追溯原协议和存储边界，不是当前可执行操作指南；当前平台接口见[客户端管理](../../saas-plateform/backend/docs/oauth-issuance.md)。
 
 本手册描述当前单一 issuer 的密钥操作流程，依据 [identity 密钥实现](../src/oidc/keys.rs)、[管理原操作事务](../src/admin_operations.rs)、[平台管理代理](../../saas-plateform/backend/src/oidc/remote_admin.rs)及[当前结构基线](../../saas-plateform/backend/migrations/0001_init.sql)。它是操作说明，不是测试通过或生产演练的证明；实际执行结果、源码与二进制摘要、UTC 时间、逐例结论和清理记录应另行归档。
 

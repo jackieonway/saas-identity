@@ -14,6 +14,7 @@ mod auth_projection;
 mod auth_review;
 mod authentication;
 mod config;
+mod client_policy;
 mod delivery;
 mod error;
 mod extractors;

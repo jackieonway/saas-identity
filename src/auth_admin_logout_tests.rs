@@ -38,6 +38,34 @@ fn logout_defaults_and_invalid_target_combinations_are_explicit() {
     );
 }
 
+#[test]
+fn client_policy_rejects_infinite_tokens_and_machine_user_consent() {
+    for (access, refresh) in [
+        (Some(-1), None),
+        (Some(3601), None),
+        (None, Some(299)),
+        (None, Some(604801)),
+    ] {
+        let mut value = input();
+        value.access_token_ttl_seconds = access;
+        value.refresh_token_ttl_seconds = refresh;
+        assert!(validate_input(&mut value, false).is_err());
+    }
+    let mut value = input();
+    value.access_token_ttl_seconds = Some(60);
+    assert!(validate_input(&mut value, false).is_ok());
+    value.refresh_token_ttl_seconds = Some(300);
+    assert!(
+        validate_input(&mut value, false).is_err(),
+        "refresh ttl without refresh grant"
+    );
+    value.grant_types.push("refresh_token".into());
+    assert!(validate_input(&mut value, false).is_ok());
+    value.subject_mode = "MACHINE".into();
+    value.auto_authorize = true;
+    assert!(validate_input(&mut value, false).is_err());
+}
+
 #[tokio::test]
 #[ignore = "requires isolated IDENTITY_PHASE20_TEST_DATABASE_URL and cluster id"]
 async fn owner_target_binding_and_expired_target_pure_stop_are_canonical() -> Result<()> {

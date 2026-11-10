@@ -84,6 +84,10 @@ CREATE TABLE public.auth_clients(
 -- The shared administration fixture serves current client DTOs as well as the
 -- protocol tests. Keep the canonical short-session defaults in this base schema.
 ALTER TABLE public.auth_clients
+ ADD COLUMN IF NOT EXISTS auto_authorize boolean NOT NULL DEFAULT false,
+ ADD COLUMN IF NOT EXISTS access_token_ttl_seconds bigint,
+ ADD COLUMN IF NOT EXISTS refresh_token_ttl_seconds bigint,
+ ADD COLUMN IF NOT EXISTS client_token_ttl_seconds bigint,
  ADD COLUMN IF NOT EXISTS logout_mode text NOT NULL DEFAULT 'SHORT_SESSION_ONLINE_CHECK'
    CHECK (logout_mode IN ('SHORT_SESSION_ONLINE_CHECK','BACK_CHANNEL')),
  ADD COLUMN IF NOT EXISTS backchannel_logout_uri text,

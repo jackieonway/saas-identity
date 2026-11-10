@@ -7,6 +7,7 @@ const ISSUER: &str = "https://auth.saas.test";
 /// Identity runtime configuration intentionally does not implement Debug.
 #[derive(Clone)]
 pub(crate) struct Config {
+    pub(crate) token_defaults: crate::client_policy::TokenDefaults,
     pub(crate) app_env: String,
     pub(crate) database_url: String,
     pub(crate) bind_addr: String,
@@ -119,6 +120,7 @@ impl Config {
             "AUTH_DELIVERY_WORKER_REQUIRES_OIDC"
         );
         Ok(Self {
+            token_defaults: crate::client_policy::TokenDefaults::load(env)?,
             delivery,
             context_platform,
             context_cipher,

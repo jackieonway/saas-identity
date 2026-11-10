@@ -28,6 +28,8 @@ use uuid::Uuid;
 
 const BROWSER_COOKIE: &str = "__Host-saas_oauth_browser";
 
+#[cfg(test)]
+mod client_policy_tests;
 pub(super) mod customer_proof;
 pub(super) mod logout;
 #[cfg(test)]
@@ -37,6 +39,10 @@ pub(super) mod unified_context;
 
 #[derive(sqlx::FromRow, Clone)]
 struct Client {
+    auto_authorize: bool,
+    access_token_ttl_seconds: Option<i64>,
+    refresh_token_ttl_seconds: Option<i64>,
+    client_token_ttl_seconds: Option<i64>,
     id: Uuid,
     client_id: String,
     name: String,
@@ -460,7 +466,17 @@ pub(super) async fn authorize(
         .await
         .map_err(|_| AppError::Unavailable)?;
     let consent = if let Some(proof) = proof.as_ref() {
-        Some(auth_consent::sufficient(&mut tx, proof, client.id, &to_grants(&scopes)).await?)
+        Some(
+            consent_coverage(
+                &mut tx,
+                proof,
+                &client,
+                &scopes,
+                &headers,
+                prompts.contains("consent"),
+            )
+            .await?,
+        )
     } else {
         ensure_client_current(&mut tx, &client).await?;
         None
@@ -550,6 +566,56 @@ pub(super) async fn authorize(
     Ok(response)
 }
 
+async fn consent_coverage(
+    tx: &mut Transaction<'_, Postgres>,
+    proof: &AccountSessionProof,
+    client: &Client,
+    scopes: &[Scope],
+    headers: &HeaderMap,
+    forced: bool,
+) -> Result<ConsentState> {
+    let grants = to_grants(scopes);
+    let coverage = auth_consent::sufficient(tx, proof, client.id, &grants).await?;
+    if matches!(coverage, ConsentState::Sufficient { .. })
+        || forced
+        || !client.auto_authorize
+        || client.ownership != "FIRST_PARTY"
+        || client.subject_mode != "USER"
+        || scopes
+            .iter()
+            .any(|scope| scope.scope_name == "offline_access")
+    {
+        return Ok(coverage);
+    }
+    // Revalidate the live policy under the same locks used by consent checks.
+    // An explicit user revocation or a shared group still requires confirmation.
+    let eligible: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM auth_clients c JOIN auth_applications a ON a.application_id=c.application_id \
+         JOIN auth_consent_group_clients gc ON gc.client_id=c.id WHERE c.id=$1 AND c.auto_authorize AND c.policy_version=$3 \
+         AND c.status='ENABLED' AND a.ownership='FIRST_PARTY' AND a.status='APPROVED' \
+         AND (SELECT count(*) FROM auth_consent_group_clients members WHERE members.group_id=gc.group_id)=1 \
+         AND NOT EXISTS(SELECT 1 FROM auth_consents consent WHERE consent.user_id=$2 AND consent.group_id=gc.group_id AND consent.status='REVOKED'))")
+        .bind(client.id).bind(proof.user_id).bind(client.policy_version).fetch_one(&mut **tx).await?;
+    if !eligible {
+        return Ok(coverage);
+    }
+    let ip = audit::client_ip(headers);
+    let agent = audit::ua_of(headers);
+    auth_consent::approve(
+        tx,
+        proof,
+        client.id,
+        &grants,
+        ConsentAuditContext {
+            ip: &ip,
+            user_agent: &agent,
+        },
+    )
+    .await?;
+    audit_authorize(tx, proof, headers, client.id, "AUTH_CONSENT_AUTO_APPROVE").await?;
+    Ok(auth_consent::sufficient(tx, proof, client.id, &grants).await?)
+}
+
 pub(super) async fn get_interaction(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -585,8 +651,15 @@ pub(super) async fn get_interaction(
             .begin()
             .await
             .map_err(|_| AppError::Unavailable)?;
-        let coverage =
-            auth_consent::sufficient(&mut tx, proof, client.id, &to_grants(&scopes)).await?;
+        let coverage = consent_coverage(
+            &mut tx,
+            proof,
+            &client,
+            &scopes,
+            &headers,
+            flow.force_consent,
+        )
+        .await?;
         bind_flow_user(&mut tx, &flow, proof).await?;
         match coverage {
             ConsentState::Sufficient {
@@ -889,6 +962,7 @@ async fn client(state: &AppState, client_id: &str) -> Result<Client> {
         "SELECT c.id,c.client_id,a.display_name AS name,a.purpose AS app_purpose,a.ownership,a.approved_scopes, \
          c.client_type,c.runtime_kind,c.grant_types,c.token_endpoint_auth_method,c.redirect_uris,c.post_logout_redirect_uris,c.status, \
          c.subject_mode,c.context_mode,c.allowed_member_types,c.environment,c.policy_version,c.application_id, \
+         c.auto_authorize,c.access_token_ttl_seconds,c.refresh_token_ttl_seconds,c.client_token_ttl_seconds, \
          a.status AS application_status,a.projection_version AS application_projection_version \
          FROM public.auth_clients c JOIN public.auth_applications a ON a.application_id=c.application_id \
          WHERE c.client_id=$1",
@@ -905,6 +979,7 @@ async fn client_by_internal_id(state: &AppState, id: Uuid) -> Result<Client> {
         "SELECT c.id,c.client_id,a.display_name AS name,a.purpose AS app_purpose,a.ownership,a.approved_scopes, \
          c.client_type,c.runtime_kind,c.grant_types,c.token_endpoint_auth_method,c.redirect_uris,c.post_logout_redirect_uris,c.status, \
          c.subject_mode,c.context_mode,c.allowed_member_types,c.environment,c.policy_version,c.application_id, \
+         c.auto_authorize,c.access_token_ttl_seconds,c.refresh_token_ttl_seconds,c.client_token_ttl_seconds, \
          a.status AS application_status,a.projection_version AS application_projection_version \
          FROM public.auth_clients c JOIN public.auth_applications a ON a.application_id=c.application_id \
          WHERE c.id=$1",
@@ -2015,7 +2090,12 @@ async fn client_credentials_token(
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut *tx)
         .await?;
-    let mut deadline = now + Duration::minutes(5);
+    let mut deadline = now
+        + Duration::seconds(
+            client
+                .client_token_ttl_seconds
+                .unwrap_or(state.config.token_defaults.client_token_ttl_seconds),
+        );
     if let Some(expires_at) = credential_expires_at {
         deadline = deadline.min(expires_at);
     }
@@ -2465,20 +2545,26 @@ async fn refresh_token(
         return Err(super::invalid_grant());
     }
 
-    let idle_window = if offline_access {
-        Duration::hours(24)
-    } else {
-        Duration::minutes(30)
-    };
+    let idle_window = Duration::seconds(
+        state
+            .config
+            .token_defaults
+            .refresh_idle(client.refresh_token_ttl_seconds, offline_access),
+    );
     let next_idle_expires_at = (now + idle_window).min(absolute_expires_at);
-    let access_expires_at = (now + Duration::minutes(5))
-        .min(current_grant.expires_at)
-        .min(absolute_expires_at)
-        .min(if offline_access {
-            absolute_expires_at
-        } else {
-            session_expires
-        });
+    let access_expires_at = (now
+        + Duration::seconds(
+            client
+                .access_token_ttl_seconds
+                .unwrap_or(state.config.token_defaults.access_token_ttl_seconds),
+        ))
+    .min(current_grant.expires_at)
+    .min(absolute_expires_at)
+    .min(if offline_access {
+        absolute_expires_at
+    } else {
+        session_expires
+    });
     if next_idle_expires_at <= now || access_expires_at <= now {
         return Err(super::invalid_grant());
     }
@@ -2781,7 +2867,13 @@ async fn exchange_authorization(
     } else {
         session_expires
     };
-    let mut deadline = (now + Duration::minutes(5)).min(grant_deadline);
+    let mut deadline = (now
+        + Duration::seconds(
+            client
+                .access_token_ttl_seconds
+                .unwrap_or(state.config.token_defaults.access_token_ttl_seconds),
+        ))
+    .min(grant_deadline);
     if !offline_access {
         deadline = deadline.min(session_expires);
     }
@@ -2858,11 +2950,12 @@ async fn exchange_authorization(
     {
         let family_id = uuid7::new_uuid();
         let refresh_token = sso::opaque_secret()?;
-        let idle_window = if offline_access {
-            Duration::hours(24)
-        } else {
-            Duration::minutes(30)
-        };
+        let idle_window = Duration::seconds(
+            state
+                .config
+                .token_defaults
+                .refresh_idle(client.refresh_token_ttl_seconds, offline_access),
+        );
         let idle_deadline = (now + idle_window).min(grant_deadline);
         if idle_deadline <= now {
             return Err(super::invalid_grant());
