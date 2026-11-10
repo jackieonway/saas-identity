@@ -33,4 +33,13 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 
 [profile.dev]
+incremental = false
 debug = 1
+
+[profile.test]
+debug = 1
+incremental = false
+
+[profile.release]
+strip = "debuginfo"
+debug = 0
