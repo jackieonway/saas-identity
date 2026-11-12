@@ -48,6 +48,9 @@ pub(crate) async fn verify(state: &IdentityState) -> Result<(), AppError> {
          AND NOT pg_catalog.has_column_privilege(current_user,'public.users','is_super_admin','SELECT,INSERT,UPDATE') \
          AND NOT pg_catalog.has_column_privilege(current_user,'public.users','id','UPDATE') \
          AND NOT pg_catalog.has_table_privilege(current_user,'public.users','DELETE,TRUNCATE,TRIGGER') \
+         AND (SELECT count(*) FROM pg_catalog.pg_index i WHERE i.indexrelid IN \
+           (to_regclass('public.idx_users_login_email'),to_regclass('public.idx_users_login_phone')) \
+           AND i.indisunique AND i.indisvalid)=2 \
          AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','auto_authorize','SELECT') \
          AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','access_token_ttl_seconds','SELECT') \
          AND pg_catalog.has_column_privilege(current_user,'public.auth_clients','refresh_token_ttl_seconds','SELECT') \

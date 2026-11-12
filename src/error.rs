@@ -74,7 +74,15 @@ impl From<sqlx::Error> for AppError {
                 return AppError::Unavailable;
             }
             if db.code().as_deref() == Some("23505") {
-                return AppError::Conflict("数据已存在, 请检查编码/名称等唯一性字段".into());
+                return AppError::Conflict(
+                    match db.constraint() {
+                        Some("idx_users_login_phone") => "电话号码已被占用",
+                        Some("idx_users_login_email") => "邮箱已被占用",
+                        Some("users_username_key") => "用户名已被占用",
+                        _ => "数据已存在, 请检查编码/名称等唯一性字段",
+                    }
+                    .into(),
+                );
             }
             if db.code().as_deref() == Some("23503") {
                 return AppError::BadRequest("存在关联数据, 无法完成该操作".into());
